@@ -150,8 +150,9 @@ Two consequences for any new SwiftUI you write:
 ./build.sh
 ```
 
-Universal, macOS 13 floor, ad-hoc signed, signature verified — it stops rather
-than shipping a broken bundle. Then to see it:
+One command does everything: universal build, macOS 13 floor, per-build
+`CFBundleVersion` stamp, ad-hoc sign, signature verify, and `JUI.zip`. It stops
+rather than shipping a broken bundle. Then to see it:
 
 ```bash
 ./build.sh && open JUI.app
@@ -160,12 +161,22 @@ than shipping a broken bundle. Then to see it:
 There are no tests. Verification is running the app and looking at it. When
 changing anything visual, actually launch it.
 
-**`build.sh` does not create `JUI.zip`** — that's done by hand, so the zip can go
-stale against the bundle. Build the zip with `ditto` (preserves signature and
-permissions correctly; plain `zip` is riskier):
+`build-number` is a tracked counter file — it increments on every build and is
+stamped into the bundle's `CFBundleVersion`, so two builds are never
+indistinguishable. `CFBundleShortVersionString` (the user-facing `1.0`) is left
+alone, as is the source `Info.plist`.
+
+**Never repackage the zip by hand, and never with Finder's Compress.** The
+assets carry a `com.apple.macl` xattr that `xattr -cr` *cannot* remove — the
+kernel owns it. Any archiver that preserves xattrs writes an AppleDouble `._`
+companion per file; extracted with anything but Finder, those land inside the
+bundle as files that aren't in the code seal, and the app dies with *"a sealed
+resource is missing or invalid"* — a launch failure that looks nothing like its
+cause. `build.sh` passes `--norsrc --noextattr` to `ditto` for exactly this
+reason. To check an archive before sending it:
 
 ```bash
-ditto -c -k --keepParent JUI.app JUI.zip
+unzip -Z1 JUI.zip   # must show 12 entries, no ._ files, no __MACOSX
 ```
 
 **Distribution caveat.** The app is only ad-hoc signed — notarization needs a paid

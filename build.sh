@@ -43,10 +43,17 @@ codesign --force --sign - "$APP"
 codesign --verify --deep --strict "$APP"
 
 # Ship the zip from here rather than by hand, so it can never go stale against
-# the bundle it's named after. ditto is Apple's archiver: unlike `zip` it
-# preserves the signature and the executable bit exactly.
+# the bundle it's named after.
+#
+# --norsrc --noextattr are load-bearing. The assets carry a com.apple.macl
+# xattr that `xattr -cr` above cannot remove (the kernel owns it), and a plain
+# `ditto -c -k` would archive an AppleDouble "._" companion for every such
+# file. Extracted with anything other than Finder those land *inside* the
+# bundle as real files that aren't in the code seal, and the app then dies with
+# "a sealed resource is missing or invalid" — a launch failure that looks
+# nothing like its cause. Stripping them keeps the archive byte-clean.
 rm -f JUI.zip
-ditto -c -k --keepParent "$APP" JUI.zip
+ditto -c -k --keepParent --norsrc --noextattr "$APP" JUI.zip
 
 echo "Built $APP build $BUILD_NUMBER ($(lipo -archs "$APP/Contents/MacOS/JUI"), macOS $DEPLOY_TARGET+, signature verified)"
 echo "Packaged JUI.zip ($(du -h JUI.zip | cut -f1)) — on the receiving Mac: xattr -cr JUI.app"
