@@ -1,0 +1,200 @@
+# JUI
+
+A single-window macOS writing pad — a cream sheet, Courier, no chrome. Built as a
+gift for Juilee. Design-led: how it *feels* matters more than feature count, and
+almost every oddity in the code is a deliberate fix for something that felt wrong.
+
+**Read `CHANGELOG.md` for *what* was built and why, in order.** This file is the
+map of *where things are* and *what will break if you touch them*.
+
+## Shape of the project
+
+No Xcode project. Two Swift files compiled directly by `swiftc`:
+
+| File | Lines | Contents |
+|---|---|---|
+| `main.swift` | ~2520 | Everything: tokens, store, text engine, stickies, panel, search, settings |
+| `Onboarding.swift` | ~480 | First-run envelope flow only |
+| `build.sh` | | Universal build + ad-hoc sign + verify |
+| `Info.plist` | | `com.nidhin.jui`, `LSMinimumSystemVersion 13.0` |
+
+Assets live at the repo root and are copied into `Contents/Resources` by
+`build.sh`: `AppIcon.icns`, `Flourish.png` (corner flourish), `StickyFlower.png`,
+`FolderSprig.png`, `OnboardingLogo.png`. **Adding an asset means adding it to the
+loop in `build.sh:17`** or it silently won't ship.
+
+### Landmarks in `main.swift`
+
+| Region | Line | What |
+|---|---|---|
+| Color tokens | 5–26 | Top-level `let`s, hex in trailing comments |
+| `Style` | 28 | Fonts, margins, paragraph styles, hr/bullet constants |
+| `NoteMeta` / `SearchHit` / `Sticky` | 83–109 | Models |
+| `NotesStore` | 111–665 | The single source of truth for everything |
+| `SmoothCaret` | 676 | Shared caret glide (note editor *and* stickies) |
+| `StickyView` | 788 | Postage-stamp margin annotation, drawn by hand |
+| `PlainTextView` | 1023 | The `NSTextView` subclass — bullets, rules, cursors, paste |
+| `RichTextEditor` | 1458 | `NSViewRepresentable` bridge + `Coordinator` |
+| `TrafficDotsOverlay` / `WindowConfigurator` | 1632–1696 | Cream traffic lights |
+| `SearchPalette` | 1774 | ⌘K |
+| `ContentView` | 1921 | Layout, notes/folders panel, settings block |
+| `PlainEditorApp` | 2498 | `@main` (name is legacy — app was renamed, type wasn't) |
+
+## Architecture
+
+`NotesStore: ObservableObject` owns all state. There is no other model layer, no
+view models, no dependency injection — every view takes `store` directly.
+
+**Persistence is plain files in a user-chosen vault folder**, deliberately
+readable in Finder:
+
+```
+<vault>/
+  <uuid>.rtf                 a note (RTF so italics survive)
+  <uuid>.stickies.json       its sticky annotations, if any
+  <folder name>/             a real subdirectory — one level only, never nested
+    <uuid>.rtf
+```
+
+- Note **title** is derived, never stored: first non-empty line, 42 chars (`NotesStore.title`, :532).
+- Note **order** is `contentModificationDate` descending.
+- `refreshList()` (:486) rescans the vault from disk; it is the only thing that
+  populates `notes`/`folders`. Call it after any file operation.
+- Saves are debounced 300ms (`scheduleSave`, :637) and also fire on
+  `willTerminate` and before any note switch. An empty never-typed note is
+  never written to disk (:651).
+
+`UserDefaults` keys — the complete set: `vaultPath`, `fontFamily`, `displayName`,
+`onboardingCompleted`.
+
+### `docVersion` is the load signal
+
+`store.docVersion` increments **only when a different document is loaded into the
+editor — never on typing**. `RichTextEditor.Coordinator.loadedVersion` compares
+against it (:1528) to decide whether to blow away the text view's contents.
+
+If you add a path that changes `attr` wholesale, bump `docVersion`. If you bump
+it on keystrokes, you'll wipe the undo stack and fight the caret on every letter.
+
+### Overlay states
+
+Three mutually-aware overlays, all flags on the store:
+
+- `hiddenShown` — the flourish page: dedication + settings (name, vault, font)
+- `searchShown` — ⌘K palette
+- `onboardingShown` — first run; **cannot be escaped** (`onExitCommand {}`)
+
+`editorBlocked` (`hiddenShown || onboardingShown`, :160) freezes the text view.
+`RichTextEditor.updateNSView` (:1510) is what actually flips
+`isEditable`/`isSelectable` and moves first responder.
+
+## Invariants — break these and something visibly regresses
+
+**TextKit 1, assembled by hand.** `makeNSView` (:1463) builds
+`NSTextStorage` → `SelectionColorLayoutManager` → `NSTextContainer` explicitly,
+and `tv.retainedStorage` keeps the storage alive. This is *not* legacy drift —
+`SelectionColorLayoutManager` (:1002) is the only reliable way to stop selections
+turning system-gray when focus moves into a sticky. Do not migrate to TextKit 2.
+
+**Cursor handling lives in exactly two places.** `resetCursorRects` (:1404) is the
+mechanism AppKit actually honours for the dead margins; `ArrowZones.hoverCount`
+(:1016) lets SwiftUI controls drawn *on top of* the text view claim the arrow via
+`.arrowCursorZone()`. Earlier attempts elsewhere (`mouseMoved`, `cursorUpdate`)
+are kept as belt-and-braces but are not sufficient alone. Don't add a third way.
+
+**The native caret is fully suppressed, three ways at once** — `insertionPointColor
+= .clear`, an empty `drawInsertionPoint` override, and hiding
+`NSTextInsertionIndicator` on macOS 14+ (:698). All three are needed. `SmoothCaret`
+draws it as a `CALayer`. Any new text field in the app should use it too.
+
+**Horizontal rules are a single no-break space** (`Style.hrMarker`) alone in a
+paragraph, with the line *drawn* in `drawBackground` (:1358). Not a character run —
+that's how they re-fit on resize. `loadAttr` migrates old `"───…"` notes (:553).
+
+**Bullets are literal `"• "` text** plus `Style.bulletParagraph` (hanging indent).
+`normalizeFonts` (:1587) identifies them by `headIndent > 0` — if you change how
+bullets indent, update that check or bullet paragraphs get restyled as prose.
+
+**Typewriter input.** Smart dashes, quotes, and text replacement are off
+everywhere. Smart dashes silently broke `---` rules once already.
+
+**Sticky anchors are character ranges, remapped on every edit** via
+`textView(_:shouldChangeTextIn:)` → `store.remapStickies` (:272). Anchors inside a
+deleted range collapse to the edit point rather than dying. `syncStickies` (:1078)
+rebuilds positions on every layout pass. A sticky measures its own height, and
+must be width-set *before* measuring (:946) or long notes load at default size.
+
+**`normalizeFonts` is a safety net, not the styling path.** It forces family/size,
+paragraph style, and ink color, and strips underline/strike/link/shadow/etc. from
+anything that arrives styled (drops, services). Paste is already handled
+separately and always plain (:1218).
+
+## macOS 13 floor — the hard compatibility rule
+
+The app must keep launching on macOS 13, universal (arm64 + x86_64). An
+arm64-only or 14-only build fails on other Macs with a bare
+*"The application can't be opened"*, which reads like a signing problem and isn't.
+
+Two consequences for any new SwiftUI you write:
+
+1. **`onChange(of:)` must use the single-parameter closure** — `{ new in … }`.
+   The two-parameter `{ old, new in … }` form is macOS 14+. Every existing call
+   site uses the old form on purpose.
+2. **Anything 14+ needs `if #available`.** There are currently exactly two gated
+   sites: `NSTextInsertionIndicator` (:698) and `onKeyPress` (:1758, via the
+   `PaletteArrowKeys` modifier, which degrades to Enter/mouse on 13).
+
+## Build & ship
+
+```bash
+./build.sh
+```
+
+Universal, macOS 13 floor, ad-hoc signed, signature verified — it stops rather
+than shipping a broken bundle. Then to see it:
+
+```bash
+./build.sh && open JUI.app
+```
+
+There are no tests. Verification is running the app and looking at it. When
+changing anything visual, actually launch it.
+
+**`build.sh` does not create `JUI.zip`** — that's done by hand, so the zip can go
+stale against the bundle. Build the zip with `ditto` (preserves signature and
+permissions correctly; plain `zip` is riskier):
+
+```bash
+ditto -c -k --keepParent JUI.app JUI.zip
+```
+
+**Distribution caveat.** The app is only ad-hoc signed — notarization needs a paid
+Apple Developer account. Every rebuild gets a fresh signature, so a Mac that
+already approved an earlier JUI treats the new one as a stranger. On the
+receiving Mac, after unzipping and before first launch:
+
+```bash
+xattr -cr JUI.app
+```
+
+Then move it to `/Applications` before opening (a quarantined app launched from
+`Downloads` gets translocated to a read-only mount).
+
+## Design language
+
+Reuse the existing tokens; don't introduce new colors unless the design genuinely
+has no near neighbour (the envelope `#EBCEA3` and letter `#FFFAF3` are the only
+two that earned it).
+
+- sheet `#FDF0D9` · panel/selection `#ECDBBE` · ink `#71390D` · open-note dot
+  `#A88D34` · folder card `#F3E4CA` · rule `#AD9E84` · sticky `#F7C82D`
+- Type scale is 10 / 11 / 12 / 13 / 14 / 16, Courier throughout. **16 is the
+  largest text in the app** — including onboarding titles, which is why the
+  Figma frames' 34/24 were deliberately not used (`Onboarding.swift:60`).
+- Motion: 0.15s ease-out for hovers and panel fades, 0.2–0.25s for page
+  transitions, 0.7–0.75s for the onboarding letter. Reduced-motion collapses
+  onboarding to a straight cut.
+- Exactly one highlight exists in the notes panel at a time (`PanelHighlight`,
+  :1938). Notes slide a shared box via `matchedGeometryEffect`; folder cards
+  cross-fade instead, because morphing between tall half-width cards and short
+  full-width rows arced visibly.

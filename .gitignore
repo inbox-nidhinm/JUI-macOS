@@ -1,0 +1,5 @@
+# Build products — regenerate with ./build.sh
+JUI.app/
+JUI.zip
+
+.DS_Store
