@@ -197,8 +197,19 @@ Reuse the existing tokens; don't introduce new colors unless the design genuinel
 has no near neighbour (the envelope `#EBCEA3` and letter `#FFFAF3` are the only
 two that earned it).
 
-- sheet `#FDF0D9` · panel/selection `#ECDBBE` · ink `#71390D` · open-note dot
-  `#A88D34` · folder card `#F3E4CA` · rule `#AD9E84` · sticky `#F7C82D`
+- sheet `#FDF0D9` · panel/selection `#ECDBBE` · ink `#71390D` · divider
+  `#E6D4B5` · open-note dot `#A88D34` · folder card `#F3E4CA` · rule `#AD9E84`
+  · sticky `#F7C82D` · flourish `#F2E3C9`/`#F2DEBA` · envelope `#EBCEA3` ·
+  letter `#FFFAF3`
+- **There is one ink, `brownInk` (`#71390D`), at four fixed steps** —
+  `brownInk` (1.0) / `inkStrong` (0.85) / `inkMuted` (0.55) / `inkFaint` (0.4),
+  declared at the top of `main.swift`. Write `.foregroundStyle(inkMuted)`, never
+  `.opacity(0.5)`: a fresh opacity is a fifth colour nobody chose. The app used
+  to carry a second near-black ink and ten ad-hoc alpha steps; that's been
+  collapsed, so don't reintroduce either.
+- **The caret is `Style.ink`, deliberately.** It was `NSColor.controlAccentColor`
+  and rendered in the user's system accent — pink on the author's Mac. The one
+  element on the page that never stops moving has to be in palette.
 - Type scale is 10 / 11 / 12 / 13 / 14 / 16, Courier throughout. **16 is the
   largest text in the app** — including onboarding titles, which is why the
   Figma frames' 34/24 were deliberately not used (`Onboarding.swift:60`).

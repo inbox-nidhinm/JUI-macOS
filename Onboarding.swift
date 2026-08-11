@@ -245,7 +245,7 @@ struct OnboardingView: View {
             if name.isEmpty {
                 Text("your name")
                     .font(.custom("Courier", size: type(T.control, s)))
-                    .foregroundStyle(brownInk.opacity(0.4))
+                    .foregroundStyle(inkFaint)
                     .allowsHitTesting(false)
             }
             TextField("", text: $name)
@@ -296,7 +296,7 @@ struct OnboardingView: View {
         Button(action: goBack) {
             Text("back")
                 .font(.custom("Courier", size: type(T.back, s)))
-                .foregroundStyle(brownInk.opacity(0.55))
+                .foregroundStyle(inkMuted)
                 .padding(.vertical, type(6, s))
                 .contentShape(Rectangle())
         }
@@ -456,7 +456,7 @@ struct OnboardingPill: View {
         Button(action: action) {
             Text(title)
                 .font(.custom("Courier", size: fontSize))
-                .foregroundStyle(brownInk.opacity(enabled ? 1 : 0.3))
+                .foregroundStyle(enabled ? brownInk : inkFaint)
                 .padding(.horizontal, padH)
                 .frame(height: height)
                 .background(

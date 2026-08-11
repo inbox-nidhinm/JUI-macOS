@@ -9,6 +9,15 @@ let flourishColor = Color(red: 242 / 255, green: 227 / 255, blue: 201 / 255) // 
 let flourishHoverColor = Color(red: 242 / 255, green: 222 / 255, blue: 186 / 255) // #F2DEBA
 let brownInk = Color(red: 113 / 255, green: 57 / 255, blue: 13 / 255) // #71390D
 
+// The ink ladder — four steps, and only these four. Everything written in the
+// app is brownInk at one of them. Reaching for a fresh opacity adds a colour
+// nobody chose; pick the step that matches the role instead.
+let inkStrong: Color = brownInk.opacity(0.85) // panel rows, settings values, folder names
+let inkMuted: Color = brownInk.opacity(0.55) // labels, snippets, secondary rows
+let inkFaint: Color = brownInk.opacity(0.4) // placeholders, empty states, icons, disabled
+
+let dividerColor = Color(red: 230 / 255, green: 212 / 255, blue: 181 / 255) // #E6D4B5
+
 // botanical sprig sitting atop each folder box
 let folderSprigImage: NSImage? = {
     guard let url = Bundle.main.url(forResource: "FolderSprig", withExtension: "png")
@@ -23,11 +32,13 @@ let folderTitleHeight: CGFloat = 16
 let folderCellPadding: CGFloat = 9
 let folderCellHeight: CGFloat =
     folderSprigHeight + folderSprigGap + folderTitleHeight + folderCellPadding * 2
-let inkColor = Color(red: 0.15, green: 0.13, blue: 0.10)
 
 enum Style {
     static let ink = NSColor(red: 113 / 255, green: 57 / 255, blue: 13 / 255, alpha: 1) // #71390D
     static let selection = NSColor(red: 236 / 255, green: 219 / 255, blue: 190 / 255, alpha: 1) // #ECDBBE
+    // AppKit twin of sheetColor, for the AppKit-drawn views (the sticky icon's
+    // border). Keep in step with sheetColor above.
+    static let sheet = NSColor(red: 253 / 255, green: 240 / 255, blue: 217 / 255, alpha: 1) // #FDF0D9
     static let sideMargin: CGFloat = 200
     // user-selectable via the flourish settings page
     static var fontFamily: String = UserDefaults.standard.string(forKey: "fontFamily") ?? "Courier"
@@ -686,7 +697,9 @@ final class SmoothCaret {
         guard !configured, let view, view.window != nil else { return }
         configured = true
         view.wantsLayer = true
-        layer.backgroundColor = NSColor.controlAccentColor.cgColor
+        // house ink, not the system accent — the caret is the one thing on the
+        // page that never stops moving, so it has to be in palette
+        layer.backgroundColor = Style.ink.cgColor
         layer.cornerRadius = 1
         view.layer?.addSublayer(layer)
         view.insertionPointColor = .clear // native caret off; this layer draws it
@@ -984,8 +997,7 @@ final class SelectionIconView: NSView {
         layer?.backgroundColor = stickyNSColor.cgColor
         layer?.cornerRadius = 2
         layer?.borderWidth = 2
-        layer?.borderColor = NSColor(
-            red: 253 / 255, green: 240 / 255, blue: 217 / 255, alpha: 1).cgColor // #FDF0D9
+        layer?.borderColor = Style.sheet.cgColor
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -1734,7 +1746,7 @@ struct IconButton: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(inkColor.opacity(0.4))
+                .foregroundStyle(inkFaint)
                 .padding(8)
                 .background(
                     RoundedRectangle(cornerRadius: 7)
@@ -1787,7 +1799,7 @@ struct SearchPalette: View {
                 if query.isEmpty {
                     Text("search")
                         .font(.custom("Courier", size: 14))
-                        .foregroundStyle(brownInk.opacity(0.6))
+                        .foregroundStyle(inkMuted)
                         .allowsHitTesting(false)
                 }
                 TextField("", text: $query)
@@ -1804,13 +1816,13 @@ struct SearchPalette: View {
             .padding(.vertical, 13)
 
             Rectangle()
-                .fill(selectedNoteColorDivider)
+                .fill(dividerColor)
                 .frame(height: 1)
 
             if results.isEmpty {
                 Text("no matches")
                     .font(.custom("Courier", size: 12))
-                    .foregroundStyle(inkColor.opacity(0.4))
+                    .foregroundStyle(inkFaint)
                     .padding(14)
             } else {
                 ScrollViewReader { proxy in
@@ -1825,7 +1837,7 @@ struct SearchPalette: View {
                                             if let folder = hit.folder {
                                                 Text("\(folder)/")
                                                     .font(.custom("Courier", size: 13))
-                                                    .foregroundStyle(brownInk.opacity(0.45))
+                                                    .foregroundStyle(inkMuted)
                                                     .lineLimit(1)
                                             }
                                             Text(hit.title)
@@ -1836,7 +1848,7 @@ struct SearchPalette: View {
                                         if !hit.snippet.isEmpty {
                                             Text(hit.snippet)
                                                 .font(.custom("Courier", size: 11))
-                                                .foregroundStyle(brownInk.opacity(0.6))
+                                                .foregroundStyle(inkMuted)
                                                 .lineLimit(1)
                                         }
                                     }
@@ -1868,7 +1880,7 @@ struct SearchPalette: View {
             // and only for an empty query or one asking about sticky notes
             if showStickyToggle {
                 Rectangle()
-                    .fill(selectedNoteColorDivider)
+                    .fill(dividerColor)
                     .frame(height: 1)
                 Button {
                     store.stickiesHidden.toggle()
@@ -1877,7 +1889,7 @@ struct SearchPalette: View {
                     HStack {
                         Text(store.stickiesHidden ? "show sticky notes" : "hide sticky notes")
                             .font(.custom("Courier", size: 12))
-                            .foregroundStyle(brownInk.opacity(0.7))
+                            .foregroundStyle(inkMuted)
                         Spacer(minLength: 0)
                     }
                     .padding(.horizontal, 20) // matches result rows: 8 outer + 12 label inset
@@ -1894,10 +1906,6 @@ struct SearchPalette: View {
         .onAppear { focused = true }
         .onExitCommand { store.searchShown = false }
         .onChange(of: query) { _ in selected = 0 }
-    }
-
-    private var selectedNoteColorDivider: Color {
-        Color(red: 230 / 255, green: 212 / 255, blue: 181 / 255) // #E6D4B5
     }
 
     private var showStickyToggle: Bool {
@@ -1987,7 +1995,7 @@ struct ContentView: View {
                          ? "Juilee's personal writing pad <3"
                          : "\(store.displayName)'s personal writing pad <3")
                         .font(.custom("Courier", size: 16))
-                        .foregroundStyle(inkColor)
+                        .foregroundStyle(brownInk)
                     Spacer()
                     settingsBlock
                         .padding(.bottom, 70)
@@ -2053,7 +2061,7 @@ struct ContentView: View {
                 HStack(spacing: 6) {
                     Text("\(store.wordCount)")
                         .font(.custom("Courier", size: 10))
-                        .foregroundStyle(inkColor.opacity(0.4))
+                        .foregroundStyle(inkFaint)
                         .padding(.trailing, 6)
                     IconButton(systemName: "text.justify.left", help: "Past notes", active: showNotes) {
                         withAnimation(.easeOut(duration: 0.15)) { showNotes.toggle() }
@@ -2144,19 +2152,19 @@ struct ContentView: View {
             HStack(spacing: 12) {
                 Text("name")
                     .font(.custom("Courier", size: 12))
-                    .foregroundStyle(brownInk.opacity(0.5))
+                    .foregroundStyle(inkMuted)
                     .frame(width: 44, alignment: .leading)
                 ZStack(alignment: .leading) {
                     if nameDraft.isEmpty {
                         Text("your name")
                             .font(.custom("Courier", size: 12))
-                            .foregroundStyle(brownInk.opacity(0.4))
+                            .foregroundStyle(inkFaint)
                             .allowsHitTesting(false)
                     }
                     TextField("", text: $nameDraft)
                         .textFieldStyle(.plain)
                         .font(.custom("Courier", size: 12))
-                        .foregroundStyle(brownInk.opacity(0.85))
+                        .foregroundStyle(inkStrong)
                         .onSubmit { store.setDisplayName(nameDraft) }
                 }
                 .padding(.horizontal, 10)
@@ -2171,7 +2179,7 @@ struct ContentView: View {
             HStack(spacing: 12) {
                 Text("vault")
                     .font(.custom("Courier", size: 12))
-                    .foregroundStyle(brownInk.opacity(0.5))
+                    .foregroundStyle(inkMuted)
                     .frame(width: 44, alignment: .leading)
                 Button {
                     chooseVault()
@@ -2179,7 +2187,7 @@ struct ContentView: View {
                     HStack(spacing: 10) {
                         Text(store.vaultDisplay)
                             .font(.custom("Courier", size: 12))
-                            .foregroundStyle(brownInk.opacity(0.85))
+                            .foregroundStyle(inkStrong)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Spacer(minLength: 0)
@@ -2199,7 +2207,7 @@ struct ContentView: View {
             HStack(spacing: 12) {
                 Text("font")
                     .font(.custom("Courier", size: 12))
-                    .foregroundStyle(brownInk.opacity(0.5))
+                    .foregroundStyle(inkMuted)
                     .frame(width: 44, alignment: .leading)
                 Menu {
                     ForEach(NSFontManager.shared.availableFontFamilies.sorted(), id: \.self) { family in
@@ -2209,7 +2217,7 @@ struct ContentView: View {
                     HStack {
                         Text(store.fontFamily)
                             .font(.custom("Courier", size: 12))
-                            .foregroundStyle(brownInk.opacity(0.85))
+                            .foregroundStyle(inkStrong)
                         Spacer(minLength: 0)
                     }
                     .padding(.horizontal, 10)
@@ -2250,7 +2258,7 @@ struct ContentView: View {
                     folderGrid
                     if showsFolderDivider {
                         Rectangle()
-                            .fill(panelDivider)
+                            .fill(dividerColor)
                             .frame(height: 1)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
@@ -2260,7 +2268,7 @@ struct ContentView: View {
                    panelLocation != nil || (store.folders.isEmpty && !creatingFolder) {
                     Text("no notes yet")
                         .font(.custom("Courier", size: 13))
-                        .foregroundStyle(inkColor.opacity(0.4))
+                        .foregroundStyle(inkFaint)
                         .padding(.vertical, 9)
                         .padding(.horizontal, 18)
                 }
@@ -2287,10 +2295,6 @@ struct ContentView: View {
         }
     }
 
-    private var panelDivider: Color {
-        Color(red: 230 / 255, green: 212 / 255, blue: 181 / 255) // #E6D4B5
-    }
-
     private var folderGrid: some View {
         VStack(spacing: 6) {
             ForEach(Array(folderPairs.enumerated()), id: \.offset) { _, pair in
@@ -2313,7 +2317,7 @@ struct ContentView: View {
             HStack(spacing: 8) {
                 Text(note.title)
                     .font(.custom("Courier", size: 13))
-                    .foregroundStyle(inkColor.opacity(0.85))
+                    .foregroundStyle(inkStrong)
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 Circle()
@@ -2378,7 +2382,7 @@ struct ContentView: View {
                         TextField("", text: $folderDraft)
                             .textFieldStyle(.plain)
                             .font(.custom("Courier", size: 13))
-                            .foregroundStyle(inkColor.opacity(0.85))
+                            .foregroundStyle(inkStrong)
                             .focused($folderFieldFocused)
                             .onSubmit {
                                 _ = store.renameFolder(folder, to: folderDraft)
@@ -2389,7 +2393,7 @@ struct ContentView: View {
                     } else {
                         Text(folder.uppercased())
                             .font(.custom("Courier", size: 13))
-                            .foregroundStyle(inkColor.opacity(0.85))
+                            .foregroundStyle(inkStrong)
                             .lineLimit(1)
                         Spacer(minLength: 0)
                         Circle()
@@ -2444,7 +2448,7 @@ struct ContentView: View {
             HStack(spacing: 8) {
                 Text("‹ \(location.uppercased())")
                     .font(.custom("Courier", size: 13))
-                    .foregroundStyle(inkColor.opacity(0.55))
+                    .foregroundStyle(inkMuted)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
@@ -2471,7 +2475,7 @@ struct ContentView: View {
         TextField("folder name", text: $folderDraft)
             .textFieldStyle(.plain)
             .font(.custom("Courier", size: 13))
-            .foregroundStyle(inkColor.opacity(0.85))
+            .foregroundStyle(inkStrong)
             .focused($folderFieldFocused)
             .onSubmit {
                 store.createFolder(folderDraft)
