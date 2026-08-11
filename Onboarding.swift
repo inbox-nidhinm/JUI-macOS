@@ -12,8 +12,8 @@ import AppKit
 // existing tokens wherever the design was within a shade of them; only the
 // envelope and the letter are new.
 
-let envelopeColor = Color(red: 235 / 255, green: 206 / 255, blue: 163 / 255) // #EBCEA3
-let letterColor = Color(red: 255 / 255, green: 250 / 255, blue: 243 / 255) // #FFFAF3
+var envelopeColor: Color { Color(nsColor: Style.theme.envelope) }
+var letterColor: Color { Color(nsColor: Style.theme.letterSheet) }
 
 let onboardingLogo: NSImage? = {
     guard let url = Bundle.main.url(forResource: "OnboardingLogo", withExtension: "png")
@@ -91,7 +91,9 @@ struct EnvelopeFront: Shape {
 struct OnboardingView: View {
     @ObservedObject var store: NotesStore
 
-    private enum Step { case welcome, name, vault }
+    // name (who) → mood (how it looks) → vault (where it lives), so the technical
+    // choice comes last and the delightful one sits in the middle of the flow.
+    private enum Step { case welcome, name, mood, vault }
 
     @State private var step: Step = .welcome
     @State private var presented = false // the envelope has risen into place
@@ -173,6 +175,8 @@ struct OnboardingView: View {
             if let sprig = onboardingLogo {
                 Image(nsImage: sprig)
                     .resizable()
+                    .renderingMode(.template) // so the sprig follows the theme
+                    .foregroundStyle(flourishColor)
                     .frame(width: D.sprigW * s, height: D.sprigH * s)
                     .offset(
                         x: (D.sprigCX - D.sprigW / 2) * s,
@@ -200,6 +204,14 @@ struct OnboardingView: View {
                     VStack(spacing: D.contentGap * s) {
                         title("let’s start\nwith your name,", s)
                         nameField(s)
+                    }
+                    .frame(width: D.contentW * s)
+                    .offset(x: D.contentX * s, y: D.contentY * s)
+                case .mood:
+                    VStack(spacing: D.contentGap * s) {
+                        title("pick your\nmood", s)
+                        ThemePicker(store: store,
+                                    diameter: type(26, s), spacing: type(18, s))
                     }
                     .frame(width: D.contentW * s)
                     .offset(x: D.contentX * s, y: D.contentY * s)
@@ -331,14 +343,13 @@ struct OnboardingView: View {
     private var primaryTitle: String {
         switch step {
         case .welcome: return "begin"
-        case .name: return "next"
-        case .vault: return "next"
+        case .name, .mood, .vault: return "next"
         }
     }
 
     private var canAdvance: Bool {
         switch step {
-        case .welcome, .vault: return true
+        case .welcome, .mood, .vault: return true
         case .name: return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
@@ -375,6 +386,8 @@ struct OnboardingView: View {
             transition(to: .name)
         case .name:
             store.setDisplayName(name)
+            transition(to: .mood)
+        case .mood:
             transition(to: .vault)
         case .vault:
             finish()
@@ -385,7 +398,8 @@ struct OnboardingView: View {
         switch step {
         case .welcome: break // step one never rewinds into the animation
         case .name: transition(to: .welcome)
-        case .vault: transition(to: .name)
+        case .mood: transition(to: .name)
+        case .vault: transition(to: .mood)
         }
     }
 

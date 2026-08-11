@@ -13,10 +13,13 @@ No Xcode project. Two Swift files compiled directly by `swiftc`:
 
 | File | Lines | Contents |
 |---|---|---|
-| `main.swift` | ~2520 | Everything: tokens, store, text engine, stickies, panel, search, settings |
-| `Onboarding.swift` | ~480 | First-run envelope flow only |
+| `main.swift` | ~2600 | Everything: tokens, store, text engine, stickies, panel, search, settings |
+| `Theme.swift` | ~150 | The six palettes, and the mood-dot `ThemePicker` |
+| `Onboarding.swift` | ~490 | First-run envelope flow only |
 | `build.sh` | | Universal build + ad-hoc sign + verify |
 | `Info.plist` | | `com.nidhin.jui`, `LSMinimumSystemVersion 13.0` |
+
+**Adding a `.swift` file means adding it to the `swiftc` line in `build.sh:24`.**
 
 Assets live at the repo root and are copied into `Contents/Resources` by
 `build.sh`: `AppIcon.icns`, `Flourish.png` (corner flourish), `StickyFlower.png`,
@@ -196,6 +199,46 @@ Then move it to `/Applications` before opening (a quarantined app launched from
 Reuse the existing tokens; don't introduce new colors unless the design genuinely
 has no near neighbour (the envelope `#EBCEA3` and letter `#FFFAF3` are the only
 two that earned it).
+
+### Theming — read this before touching any colour
+
+The app ships **six themes** (cream, mint, sky, coral, lilac, orchid), picked in
+onboarding and in settings. `Style.theme` is the single global they hang off;
+every colour token in `main.swift` is a **computed var** reading through it, so
+a theme change repaints the app without any call site knowing about it.
+
+**Never write a colour literal outside `Theme.swift`.** A hardcoded value won't
+follow the theme, and the bug only shows up in five of the six. Add the token to
+`Theme` and give all six palettes a value.
+
+Two halves have to be kept in step:
+
+1. **SwiftUI** re-renders on its own — `NotesStore.themeID` is `@Published`, so
+   `ContentView` and everything under it re-reads the computed tokens.
+2. **AppKit does not.** Colours captured at init (layer backgrounds, caret,
+   `selectedTextAttributes`) and colours baked into the text storage's
+   attributes have to be pushed. That's what `PlainTextView.applyTheme()` is
+   for — `RichTextEditor.updateNSView` calls it when `themeID` changes, and it
+   fans out to `SmoothCaret`, `SelectionIconView`, every `StickyView`, and the
+   traffic-light overlay in the title bar. **Any new AppKit view that holds a
+   colour needs an `applyTheme()` and a call added to that fan-out.**
+
+`setTheme` deliberately does **not** bump `docVersion` the way `setFont` does.
+A theme change happens mid-sentence from the settings page, so the ink is
+rewritten as an attribute-only edit on the existing storage — selection, scroll
+position and undo all survive. Bumping `docVersion` would reload the document
+and throw the caret to the end of the note.
+
+**Bundled art must be tinted, not drawn raw.** All four PNGs are single-colour
+silhouettes with clean alpha. In SwiftUI use `.renderingMode(.template)` plus a
+`foregroundStyle` (that's how `Flourish`, `FolderSprig` and `OnboardingLogo`
+follow the theme). `StickyFlower` is drawn by hand in `StickyView.draw`, so it
+gets a tinted copy cached per theme — `sourceAtop` straight over the original
+would catch the sticky's own opaque background. Their baked tones map to
+`flourish`, `divider`, `flourish` and `sheet` respectively, which is why the
+cream theme looks unchanged.
+
+### Palette (cream — the other five are the same structure, hue-rotated)
 
 - sheet `#FDF0D9` · panel/selection `#ECDBBE` · ink `#71390D` · divider
   `#E6D4B5` · open-note dot `#A88D34` · folder card `#F3E4CA` · rule `#AD9E84`

@@ -90,6 +90,25 @@ A plain writing pad for Juilee. Built July 16–17, 2026.
     card edits it, and the hidden page reads it (falling back to the original
     dedication when empty).
 
+12. **Colour themes** (`Theme.swift`) — six moods: the original cream plus mint,
+    sky, coral, lilac and orchid, chosen from a row of dots in a new
+    "pick your mood" onboarding step (between name and vault) and from the
+    hidden settings page under the dedication. Clicking one applies it
+    immediately — no confirm, no relaunch — and it persists in `themeID`.
+    The five alternates were derived from the cream palette in Figma rather
+    than picked by hand: each holds the original's lightness and saturation
+    exactly and rotates every hue into an 11° band anchored on its sticky-note
+    colour, so only temperature moves and the value relationships the app
+    leans on for hierarchy survive intact. Ink on sheet stays past 4.5:1 in all
+    six (cream 6.2, coral 9.0, lilac 11.4). Structurally this turned every
+    colour token into a computed read through `Style.theme`, which also
+    collapsed the last `Color`/`NSColor` twins into single values. The AppKit
+    half — caret, selection, sticky bodies, traffic lights, and the ink baked
+    into the text storage — is pushed by `PlainTextView.applyTheme()`, done as
+    an attribute-only edit so a mid-sentence theme change keeps the caret,
+    scroll position and undo stack. All four bundled sprigs are now
+    template-tinted rather than drawn raw, so they follow the theme too.
+
 ## Minor updates & polish
 
 - **Chrome**: cream traffic lights (true-size circles, hover reveals real

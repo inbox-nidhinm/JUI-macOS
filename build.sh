@@ -30,7 +30,7 @@ done
 for arch in arm64 x86_64; do
   swiftc -O -parse-as-library -swift-version 5 \
     -target "$arch-apple-macos$DEPLOY_TARGET" \
-    main.swift Onboarding.swift -o "/tmp/jui-$arch"
+    main.swift Theme.swift Onboarding.swift -o "/tmp/jui-$arch"
 done
 lipo -create /tmp/jui-arm64 /tmp/jui-x86_64 -output "$APP/Contents/MacOS/JUI"
 rm -f /tmp/jui-arm64 /tmp/jui-x86_64

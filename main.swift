@@ -2,21 +2,23 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-let sheetColor = Color(red: 253 / 255, green: 240 / 255, blue: 217 / 255) // #FDF0D9
-let panelColor = Color(red: 236 / 255, green: 219 / 255, blue: 190 / 255) // #ECDBBE
-let openDotColor = Color(red: 168 / 255, green: 141 / 255, blue: 52 / 255) // #A88D34
-let flourishColor = Color(red: 242 / 255, green: 227 / 255, blue: 201 / 255) // #F2E3C9
-let flourishHoverColor = Color(red: 242 / 255, green: 222 / 255, blue: 186 / 255) // #F2DEBA
-let brownInk = Color(red: 113 / 255, green: 57 / 255, blue: 13 / 255) // #71390D
+// Every colour token reads through the active theme (Theme.swift), so changing
+// theme repaints the whole app without a single call site knowing about it.
+var sheetColor: Color { Color(nsColor: Style.theme.sheet) }
+var panelColor: Color { Color(nsColor: Style.theme.panel) }
+var openDotColor: Color { Color(nsColor: Style.theme.openDot) }
+var flourishColor: Color { Color(nsColor: Style.theme.flourish) }
+var flourishHoverColor: Color { Color(nsColor: Style.theme.flourishHover) }
+var brownInk: Color { Color(nsColor: Style.theme.ink) }
 
 // The ink ladder — four steps, and only these four. Everything written in the
 // app is brownInk at one of them. Reaching for a fresh opacity adds a colour
 // nobody chose; pick the step that matches the role instead.
-let inkStrong: Color = brownInk.opacity(0.85) // panel rows, settings values, folder names
-let inkMuted: Color = brownInk.opacity(0.55) // labels, snippets, secondary rows
-let inkFaint: Color = brownInk.opacity(0.4) // placeholders, empty states, icons, disabled
+var inkStrong: Color { brownInk.opacity(0.85) } // panel rows, settings values, folder names
+var inkMuted: Color { brownInk.opacity(0.55) } // labels, snippets, secondary rows
+var inkFaint: Color { brownInk.opacity(0.4) } // placeholders, empty states, icons, disabled
 
-let dividerColor = Color(red: 230 / 255, green: 212 / 255, blue: 181 / 255) // #E6D4B5
+var dividerColor: Color { Color(nsColor: Style.theme.divider) }
 
 // botanical sprig sitting atop each folder box
 let folderSprigImage: NSImage? = {
@@ -24,7 +26,7 @@ let folderSprigImage: NSImage? = {
     else { return nil }
     return NSImage(contentsOf: url)
 }()
-let folderBaseColor = Color(red: 243 / 255, green: 228 / 255, blue: 202 / 255) // #F3E4CA
+var folderBaseColor: Color { Color(nsColor: Style.theme.folderBase) }
 let folderSprigHeight: CGFloat = 32
 let folderSprigWidth: CGFloat = 32 * (181.0 / 271.0) // keep the artwork's aspect
 let folderSprigGap: CGFloat = 14 // breathing room between sprig and name
@@ -34,11 +36,14 @@ let folderCellHeight: CGFloat =
     folderSprigHeight + folderSprigGap + folderTitleHeight + folderCellPadding * 2
 
 enum Style {
-    static let ink = NSColor(red: 113 / 255, green: 57 / 255, blue: 13 / 255, alpha: 1) // #71390D
-    static let selection = NSColor(red: 236 / 255, green: 219 / 255, blue: 190 / 255, alpha: 1) // #ECDBBE
-    // AppKit twin of sheetColor, for the AppKit-drawn views (the sticky icon's
-    // border). Keep in step with sheetColor above.
-    static let sheet = NSColor(red: 253 / 255, green: 240 / 255, blue: 217 / 255, alpha: 1) // #FDF0D9
+    // The one piece of mutable global state the colours hang off. Set on launch
+    // from UserDefaults and by NotesStore.setTheme thereafter; everything else
+    // in this file reads through it.
+    static var theme: Theme = Themes.named(UserDefaults.standard.string(forKey: "themeID"))
+
+    static var ink: NSColor { theme.ink }
+    static var selection: NSColor { theme.panel }
+    static var sheet: NSColor { theme.sheet }
     static let sideMargin: CGFloat = 200
     // user-selectable via the flourish settings page
     static var fontFamily: String = UserDefaults.standard.string(forKey: "fontFamily") ?? "Courier"
@@ -449,6 +454,20 @@ final class NotesStore: ObservableObject {
         scheduleSave()
     }
 
+    @Published private(set) var themeID: String = Style.theme.id
+
+    // Deliberately does NOT bump docVersion the way setFont does. A font change
+    // reflows the document and can afford a reload; a theme change happens
+    // mid-sentence from the settings page, so the text view recolours its
+    // storage in place instead (PlainTextView.applyTheme) — no reload, no lost
+    // undo, no caret jump to the end of the note.
+    func setTheme(_ theme: Theme) {
+        guard theme.id != themeID else { return }
+        Style.theme = theme
+        themeID = theme.id
+        UserDefaults.standard.set(theme.id, forKey: "themeID")
+    }
+
     func search(_ query: String) -> [SearchHit] {
         let q = query.trimmingCharacters(in: .whitespaces)
         var hits: [SearchHit] = []
@@ -677,7 +696,7 @@ final class NotesStore: ObservableObject {
 
 // MARK: - Sticky annotation views
 
-let stickyNSColor = NSColor(red: 247 / 255, green: 200 / 255, blue: 45 / 255, alpha: 1) // #F7C82D
+var stickyNSColor: NSColor { Style.theme.sticky }
 
 // MARK: - Smooth caret (MS Word 2013-style glide)
 
@@ -700,10 +719,16 @@ final class SmoothCaret {
         // house ink, not the system accent — the caret is the one thing on the
         // page that never stops moving, so it has to be in palette
         layer.backgroundColor = Style.ink.cgColor
+        applyTheme()
         layer.cornerRadius = 1
         view.layer?.addSublayer(layer)
         view.insertionPointColor = .clear // native caret off; this layer draws it
         update(animated: false)
+    }
+
+    func applyTheme() {
+        guard configured else { return }
+        layer.backgroundColor = Style.ink.cgColor
     }
 
     func update(animated: Bool) {
@@ -796,14 +821,41 @@ final class StickyTextView: NSTextView {
         DispatchQueue.main.async { [weak self] in self?.smoothCaret.update(animated: false) }
         return ok
     }
+
+    func applyTheme() {
+        textColor = Style.ink
+        insertionPointColor = Style.ink
+        smoothCaret.applyTheme()
+    }
 }
 
 final class StickyView: NSView, NSTextViewDelegate {
-    private static let flower: NSImage? = {
+    private static let flowerSource: NSImage? = {
         guard let url = Bundle.main.url(forResource: "StickyFlower", withExtension: "png")
         else { return nil }
         return NSImage(contentsOf: url)
     }()
+
+    // The flower is a single-colour silhouette with a clean alpha channel, so it
+    // can be recoloured wholesale to follow the theme. SwiftUI does this with
+    // .renderingMode(.template); here the drawing is by hand, so the tint is
+    // baked into a copy — sourceAtop over the source directly would catch the
+    // sticky's own background, which is already opaque behind it. Cached per
+    // theme so it isn't rebuilt on every draw pass.
+    private static var flowerCache: [String: NSImage] = [:]
+
+    private static func flower(for theme: Theme) -> NSImage? {
+        if let hit = flowerCache[theme.id] { return hit }
+        guard let src = flowerSource else { return nil }
+        let out = NSImage(size: src.size)
+        out.lockFocus()
+        src.draw(at: .zero, from: .zero, operation: .sourceOver, fraction: 1)
+        theme.sheet.set()
+        NSRect(origin: .zero, size: src.size).fill(using: .sourceAtop)
+        out.unlockFocus()
+        flowerCache[theme.id] = out
+        return out
+    }
 
     let stickyID: UUID
     private let noteView = StickyTextView()
@@ -881,10 +933,15 @@ final class StickyView: NSView, NSTextViewDelegate {
         stickyNSColor.setFill()
         path.fill()
         // the little flower, bottom-left corner
-        Self.flower?.draw(
+        Self.flower(for: Style.theme)?.draw(
             in: NSRect(x: 10, y: 10, width: 20, height: 22),
             from: .zero, operation: .sourceOver, fraction: 1)
         NSGraphicsContext.restoreGraphicsState()
+    }
+
+    func applyTheme() {
+        noteView.applyTheme()
+        needsDisplay = true // the stamp body and its flower are drawn by hand
     }
 
     private func stickyMenu() -> NSMenu {
@@ -994,13 +1051,17 @@ final class SelectionIconView: NSView {
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: 20, height: 20))
         wantsLayer = true
-        layer?.backgroundColor = stickyNSColor.cgColor
         layer?.cornerRadius = 2
         layer?.borderWidth = 2
-        layer?.borderColor = Style.sheet.cgColor
+        applyTheme()
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
+
+    func applyTheme() {
+        layer?.backgroundColor = stickyNSColor.cgColor
+        layer?.borderColor = Style.sheet.cgColor
+    }
 
     override func mouseDown(with event: NSEvent) { onClick?() }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
@@ -1176,6 +1237,35 @@ final class PlainTextView: NSTextView {
         super.layout()
         syncStickies()
         updateSelectionIcon()
+    }
+
+    // MARK: Theme
+
+    // Recolour everything AppKit owns, in place. The ink is baked into the text
+    // storage's attributes, so it has to be rewritten — but as an attribute-only
+    // edit that leaves the selection, scroll position and undo stack alone.
+    func applyTheme() {
+        if let storage = textStorage, storage.length > 0 {
+            let full = NSRange(location: 0, length: storage.length)
+            storage.beginEditing()
+            storage.addAttribute(.foregroundColor, value: Style.ink, range: full)
+            storage.endEditing()
+            didChangeText() // let the store pick the recoloured text up and save it
+        }
+        var attrs = typingAttributes
+        attrs[.foregroundColor] = Style.ink
+        typingAttributes = attrs
+        selectedTextAttributes = [.backgroundColor: Style.selection]
+        smoothCaret.applyTheme()
+        selectionIcon.applyTheme()
+        stickyViews.values.forEach { $0.applyTheme() }
+        // the cream dots covering the traffic lights live in the title bar, well
+        // outside this view's tree
+        if let titlebar = window?.standardWindowButton(.closeButton)?.superview {
+            titlebar.subviews.compactMap { $0 as? TrafficDotsOverlay }
+                .forEach { $0.needsDisplay = true }
+        }
+        needsDisplay = true // horizontal rules are drawn, not stored
     }
 
     // MARK: Smooth caret (MS Word-style glide)
@@ -1537,6 +1627,10 @@ struct RichTextEditor: NSViewRepresentable {
                 DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }
             }
         }
+        if context.coordinator.themeID != store.themeID {
+            context.coordinator.themeID = store.themeID
+            tv.applyTheme()
+        }
         if context.coordinator.loadedVersion != store.docVersion {
             tv.textStorage?.setAttributedString(store.attr)
             tv.typingAttributes = Style.base
@@ -1563,6 +1657,7 @@ struct RichTextEditor: NSViewRepresentable {
         var loadedVersion = -1
         var wasHidden = false
         var wasSearch = false
+        var themeID = Style.theme.id
         private var normalizing = false
 
         init(store: NotesStore) { self.store = store }
@@ -1991,11 +2086,14 @@ struct ContentView: View {
                     .onTapGesture {} // swallow clicks so the editor stays untouched
                 VStack(spacing: 0) {
                     Spacer()
-                    Text(store.displayName.isEmpty
-                         ? "Juilee's personal writing pad <3"
-                         : "\(store.displayName)'s personal writing pad <3")
-                        .font(.custom("Courier", size: 16))
-                        .foregroundStyle(brownInk)
+                    VStack(spacing: 26) {
+                        Text(store.displayName.isEmpty
+                             ? "Juilee's personal writing pad <3"
+                             : "\(store.displayName)'s personal writing pad <3")
+                            .font(.custom("Courier", size: 16))
+                            .foregroundStyle(brownInk)
+                        ThemePicker(store: store)
+                    }
                     Spacer()
                     settingsBlock
                         .padding(.bottom, 70)
@@ -2374,6 +2472,8 @@ struct ContentView: View {
                 if let sprig = folderSprigImage {
                     Image(nsImage: sprig)
                         .resizable()
+                        .renderingMode(.template) // so the sprig follows the theme
+                        .foregroundStyle(dividerColor)
                         .frame(width: folderSprigWidth, height: folderSprigHeight)
                 }
                 Spacer(minLength: folderSprigGap)
