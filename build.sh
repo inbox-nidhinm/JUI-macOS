@@ -57,3 +57,37 @@ ditto -c -k --keepParent --norsrc --noextattr "$APP" JUI.zip
 
 echo "Built $APP build $BUILD_NUMBER ($(lipo -archs "$APP/Contents/MacOS/JUI"), macOS $DEPLOY_TARGET+, signature verified)"
 echo "Packaged JUI.zip ($(du -h JUI.zip | cut -f1)) — on the receiving Mac: xattr -cr JUI.app"
+
+# --- back up to GitHub -------------------------------------------------------
+# Records every build and pushes it, so the source is never only on this Mac.
+#
+# Nothing here may fail the build: `set -e` is off for this block deliberately.
+# A build with no network, or before `gh auth login` has been run, still
+# succeeds — it just says so and leaves the work committed locally, ready to go
+# up next time. Build products are gitignored, so only source is pushed.
+set +e
+if git rev-parse --git-dir > /dev/null 2>&1; then
+  if [ -z "$(git remote get-url origin 2>/dev/null)" ]; then
+    echo "GitHub: no remote set up yet — skipping."
+  else
+    if [ -n "$(git status --porcelain)" ]; then
+      git add -A
+      CHANGED=$(git diff --cached --name-only | sed 's/^/  /')
+      git commit -q -m "Build $BUILD_NUMBER" -m "Files changed:
+$CHANGED"
+      echo "GitHub: committed build $BUILD_NUMBER."
+    fi
+    if [ -n "$(git log origin/$(git branch --show-current)..HEAD 2>/dev/null)" ] \
+       || ! git rev-parse --verify --quiet "origin/$(git branch --show-current)" > /dev/null; then
+      if git push -q -u origin "$(git branch --show-current)" 2>/dev/null; then
+        echo "GitHub: pushed to $(git remote get-url origin)"
+      else
+        echo "GitHub: push failed — offline, or sign in first with: gh auth login"
+        echo "        Your work is committed locally and will go up on the next build."
+      fi
+    else
+      echo "GitHub: already up to date."
+    fi
+  fi
+fi
+set -e
