@@ -30,18 +30,40 @@ loop in `build.sh:17`** or it silently won't ship.
 
 | Region | Line | What |
 |---|---|---|
-| Color tokens | 5–26 | Top-level `let`s, hex in trailing comments |
-| `Style` | 28 | Fonts, margins, paragraph styles, hr/bullet constants |
-| `NoteMeta` / `SearchHit` / `Sticky` | 83–109 | Models |
-| `NotesStore` | 111–665 | The single source of truth for everything |
-| `SmoothCaret` | 676 | Shared caret glide (note editor *and* stickies) |
-| `StickyView` | 788 | Postage-stamp margin annotation, drawn by hand |
-| `PlainTextView` | 1023 | The `NSTextView` subclass — bullets, rules, cursors, paste |
-| `RichTextEditor` | 1458 | `NSViewRepresentable` bridge + `Coordinator` |
-| `TrafficDotsOverlay` / `WindowConfigurator` | 1632–1696 | Cream traffic lights |
-| `SearchPalette` | 1774 | ⌘K |
-| `ContentView` | 1921 | Layout, notes/folders panel, settings block |
-| `PlainEditorApp` | 2498 | `@main` (name is legacy — app was renamed, type wasn't) |
+| Colour tokens | 7–35 | Computed vars reading `Style.theme` — never literals |
+| `Style` | 38 | Theme global, fonts, margins, paragraph styles, hr/bullet constants |
+| `NoteMeta` / `SearchHit` / `Sticky` | 99–125 | Models |
+| `NotesStore` | 127 | The single source of truth for everything |
+| `SmoothCaret` | 717 | Shared caret glide (note editor *and* stickies) |
+| `StickyView` | 843 | Postage-stamp margin annotation, drawn by hand |
+| `PlainTextView` | 1107 | The `NSTextView` subclass — bullets, rules, cursors, paste, `applyTheme` |
+| `RichTextEditor` | 1571 | `NSViewRepresentable` bridge + `Coordinator` |
+| `TrafficDotsOverlay` / `WindowConfigurator` | 1750–1792 | The flat dots over the traffic lights |
+| `SearchPalette` | 1892 | ⌘K — results *and* commands |
+| `ContentView` | 2098 | Layout, notes/folders panel, settings block |
+| `PlainEditorApp` | 2681 | `@main` (name is legacy — app was renamed, type wasn't) |
+
+These line numbers drift with every edit. If one is off by more than a few, grep
+the declaration rather than trusting the table.
+
+### ⌘K holds commands as well as matches
+
+Below the results the palette can show **command rows**, and results plus commands
+share **one selection space** (`selected` indexes across both), so the arrows walk
+the whole list and Return fires whatever is highlighted. A command row carries the
+same highlight box as a result so it reads as selectable.
+
+- **`hide/show sticky notes`** — appears on an empty query or one about stickies.
+- **`onboard again`** — properly hidden: needs three characters and a real prefix
+  of "onboard", so it can't surface while searching notes. Calls
+  `NotesStore.replayOnboarding()`, which deliberately leaves `onboardingCompleted`
+  alone — the only way out of onboarding is to finish it (Escape is dead by
+  design), so abandoning a replay by quitting must not re-trigger it on next
+  launch.
+
+Onboarding seeds the name and vault from the store on appear, so replaying it and
+clicking straight through changes nothing. Before that, a replay blanked the name
+and offered to move the vault back to its default.
 
 ## Architecture
 

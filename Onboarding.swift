@@ -355,7 +355,8 @@ struct OnboardingView: View {
     }
 
     private var vaultDisplay: String {
-        let url = chosenVault ?? NotesStore.defaultVaultDir
+        // the vault in force, not the default — they may have moved it already
+        let url = chosenVault ?? store.dir
         return url.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
     }
 
@@ -364,6 +365,10 @@ struct OnboardingView: View {
     // The envelope rises into view first, then — Screen One → Two — the letter
     // is drawn up out of it.
     private func runIntro() {
+        // On a replay both answers are already known. Seeding them means
+        // clicking straight through changes nothing, rather than blanking the
+        // name and offering to move the vault back to its default.
+        if name.isEmpty { name = store.displayName }
         if prefersReducedMotion {
             presented = true
             letterRaised = true
@@ -417,7 +422,7 @@ struct OnboardingView: View {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
-        panel.directoryURL = chosenVault ?? NotesStore.defaultVaultDir
+        panel.directoryURL = chosenVault ?? store.dir
         panel.prompt = "Use as Vault"
         panel.message = "Choose the folder where notes are stored"
         if panel.runModal() == .OK, let url = panel.url {

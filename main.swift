@@ -187,6 +187,17 @@ final class NotesStore: ObservableObject {
         onboardingShown = false
     }
 
+    // Replays the first-run flow on demand — the hidden "onboard again" row in
+    // ⌘K. Deliberately does not clear onboardingCompleted: the only way out of
+    // onboarding is to finish it (Escape is dead by design), so if someone quits
+    // half-way the next launch should still open straight into the editor.
+    func replayOnboarding() {
+        searchShown = false
+        hiddenShown = false
+        saveNow() // the editor is about to freeze behind a full-window overlay
+        onboardingShown = true
+    }
+
     init() {
         let fm = FileManager.default
         let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -1886,8 +1897,38 @@ struct SearchPalette: View {
 
     private var hits: [SearchHit] { store.search(query) }
 
+    // A command reads like a result and selects like one. The palette's rows are
+    // the results followed by whichever commands are showing, in a single
+    // selection space — so the arrows walk the whole list and Return fires
+    // whatever is highlighted, note or command.
+    private struct Command: Identifiable {
+        let id: String
+        let title: String
+        let run: () -> Void
+    }
+
+    private var commands: [Command] {
+        var out: [Command] = []
+        if showStickyToggle {
+            out.append(Command(
+                id: "sticky",
+                title: store.stickiesHidden ? "show sticky notes" : "hide sticky notes"
+            ) {
+                store.stickiesHidden.toggle()
+                store.searchShown = false
+            })
+        }
+        if showOnboardAgain {
+            out.append(Command(id: "onboard", title: "onboard again") {
+                store.replayOnboarding()
+            })
+        }
+        return out
+    }
+
     var body: some View {
         let results = hits
+        let cmds = commands
         VStack(spacing: 0) {
             ZStack(alignment: .leading) {
                 // macOS ignores prompt styling, so the placeholder is drawn manually
@@ -1902,9 +1943,9 @@ struct SearchPalette: View {
                     .font(.custom("Courier", size: 14))
                     .foregroundStyle(brownInk)
                 .focused($focused)
-                .onSubmit { open(results) }
+                .onSubmit { activate(results, cmds) }
                 .modifier(PaletteArrowKeys(
-                    down: { selected = min(selected + 1, max(results.count - 1, 0)) },
+                    down: { selected = min(selected + 1, max(results.count + cmds.count - 1, 0)) },
                     up: { selected = max(selected - 1, 0) }))
             }
             .padding(.horizontal, 16)
@@ -1966,32 +2007,26 @@ struct SearchPalette: View {
                     }
                     .frame(height: listHeight(results))
                     .onChange(of: selected) { new in
-                        proxy.scrollTo(new)
+                        // command rows live outside the scroll view
+                        if new < results.count { proxy.scrollTo(new) }
                     }
                 }
             }
 
-            // contextual sticky-notes toggle: only when this note has stickies,
-            // and only for an empty query or one asking about sticky notes
-            if showStickyToggle {
+            // The sticky toggle shows on an empty query or one about stickies;
+            // "onboard again" is properly hidden and needs to be typed for.
+            if !cmds.isEmpty {
                 Rectangle()
                     .fill(dividerColor)
                     .frame(height: 1)
-                Button {
-                    store.stickiesHidden.toggle()
-                    store.searchShown = false
-                } label: {
-                    HStack {
-                        Text(store.stickiesHidden ? "show sticky notes" : "hide sticky notes")
-                            .font(.custom("Courier", size: 12))
-                            .foregroundStyle(inkMuted)
-                        Spacer(minLength: 0)
+                VStack(spacing: 0) {
+                    ForEach(Array(cmds.enumerated()), id: \.element.id) { offset, cmd in
+                        let index = results.count + offset
+                        commandRow(cmd.title, selected: selected == index, action: cmd.run)
+                            .onHover { if $0 { selected = index } }
                     }
-                    .padding(.horizontal, 20) // matches result rows: 8 outer + 12 label inset
-                    .padding(.vertical, 14)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .padding(.vertical, 8)
             }
         }
         .frame(width: 460)
@@ -2009,15 +2044,54 @@ struct SearchPalette: View {
         return q.isEmpty || "sticky notes".contains(q) || q.contains("sticky")
     }
 
+    // Needs three characters and a real prefix of "onboard", so it can't
+    // surface by accident while someone is searching their notes. Matches
+    // "onb…" through "onboard again", and "onboarding" too.
+    private var showOnboardAgain: Bool {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard q.count >= 3 else { return false }
+        return "onboard again".hasPrefix(q) || q.hasPrefix("onboard")
+    }
+
+    // Carries the same highlight box as a result row, so it's visibly one of the
+    // selectable things rather than a caption. Kept in the muted ink step, and a
+    // shade shorter, so it still reads as furniture below the matches.
+    private func commandRow(
+        _ title: String, selected: Bool, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title)
+                    .font(.custom("Courier", size: 12))
+                    .foregroundStyle(inkMuted)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 9)
+            .padding(.horizontal, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(selected ? sheetColor : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8) // matches result rows: 8 outer + 12 label inset
+    }
+
     // hug the results instead of reserving empty space
     private func listHeight(_ results: [SearchHit]) -> CGFloat {
         let rows = results.reduce(CGFloat(0)) { $0 + ($1.snippet.isEmpty ? 33 : 49) }
         return min(rows + 16, 300)
     }
 
-    private func open(_ results: [SearchHit]) {
-        guard results.indices.contains(selected) else { return }
-        store.reveal(results[selected].id, query: query)
+    // Return fires whatever is highlighted — a note opens, a command runs.
+    private func activate(_ results: [SearchHit], _ cmds: [Command]) {
+        if results.indices.contains(selected) {
+            store.reveal(results[selected].id, query: query)
+            return
+        }
+        let offset = selected - results.count
+        if cmds.indices.contains(offset) { cmds[offset].run() }
     }
 }
 
@@ -2181,6 +2255,10 @@ struct ContentView: View {
                     .transition(.opacity)
             }
         }
+        // SwiftUI's own text fields (⌘K, the name and folder-name fields) draw
+        // their caret in the system accent, so they were the last thing in the
+        // app still going pink. NSTextView carets are handled by SmoothCaret.
+        .tint(brownInk)
         .background(WindowConfigurator())
         .frame(minWidth: 640, minHeight: 400)
         .onChange(of: showNotes) { open in
