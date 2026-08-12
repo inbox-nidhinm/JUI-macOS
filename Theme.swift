@@ -108,8 +108,6 @@ enum Themes {
 // that seal and the app would refuse to launch with "a sealed resource is missing
 // or invalid", so there is deliberately no attempt to.
 enum AppIcon {
-    private static let goldBlue = 57.0 // #F9D039, the field
-    private static let creamBlue = 224.0 // #FDF2E0, the motif
     private static var cache: [String: NSImage] = [:]
 
     static func apply(_ theme: Theme) {
@@ -120,8 +118,8 @@ enum AppIcon {
 
     private static func image(for theme: Theme) -> NSImage? {
         if let hit = cache[theme.id] { return hit }
-        guard let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
-              let base = NSImage(contentsOf: url) else { return nil }
+        let base = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
+        guard base.size.width > 0 else { return nil }
         // cream is what the artwork was drawn in; leave it untouched
         let result = theme.id == Themes.cream.id
             ? base
@@ -130,6 +128,15 @@ enum AppIcon {
         return result
     }
 
+    // Recolours the bundle's icon *as macOS composes it*, not the raw AppIcon.icns.
+    //
+    // That distinction is the whole fix. The raw asset is a full-bleed opaque
+    // square; macOS insets it to the 824-in-1024 icon grid and masks it to the
+    // system squircle before Finder ever shows it. But applicationIconImage is
+    // drawn exactly as handed over, with no inset and no mask — so recolouring the
+    // raw file produced a Dock tile that was both hard-cornered and visibly larger
+    // than its neighbours. Starting from the composed icon inherits the correct
+    // geometry for whatever macOS is running, with no shape maths here to go stale.
     private static func recoloured(_ base: NSImage, field: NSColor, motif: NSColor) -> NSImage? {
         let side = 512 // ample for the Dock, which tops out around 256pt @2x
         guard let rep = NSBitmapImageRep(
@@ -148,14 +155,34 @@ enum AppIcon {
               let m = motif.usingColorSpace(.sRGB) else { return nil }
         let from = (f.redComponent * 255, f.greenComponent * 255, f.blueComponent * 255)
         let to = (m.redComponent * 255, m.greenComponent * 255, m.blueComponent * 255)
-        let span = creamBlue - goldBlue
+
+        // Calibrate the two endpoints from the pixels actually in this bitmap
+        // rather than from constants. The .icns is colour-converted on its way in
+        // here, so the tones measured in the file are not the ones that arrive —
+        // the gold reads #F7C82D, not the #F9D039 the file contains. Reading the
+        // range off the opaque interior is immune to that, and to the artwork
+        // being redrawn later.
+        var lo = 255.0, hi = 0.0
+        for i in stride(from: 0, to: side * side * 4, by: 4) where data[i + 3] > 250 {
+            let blue = Double(data[i + 2])
+            lo = min(lo, blue)
+            hi = max(hi, blue)
+        }
+        guard hi - lo > 1 else { return nil } // not the two-tone artwork we expect
+        let span = hi - lo
         func byte(_ value: Double) -> UInt8 { UInt8(min(max(value, 0), 255)) }
 
         for i in stride(from: 0, to: side * side * 4, by: 4) {
-            let t = min(max((Double(data[i + 2]) - goldBlue) / span, 0), 1)
-            data[i] = byte(from.0 + (to.0 - from.0) * t)
-            data[i + 1] = byte(from.1 + (to.1 - from.1) * t)
-            data[i + 2] = byte(from.2 + (to.2 - from.2) * t)
+            let a = Double(data[i + 3])
+            guard a > 0 else { continue } // outside the squircle; leave it clear
+            // CoreGraphics hands back premultiplied RGB, so undo that before
+            // reading the tone and redo it after — otherwise the soft squircle
+            // edge reads as near-gold and picks up a bright fringe.
+            let t = min(max((Double(data[i + 2]) * (255 / a) - lo) / span, 0), 1)
+            let unmul = a / 255
+            data[i] = byte((from.0 + (to.0 - from.0) * t) * unmul)
+            data[i + 1] = byte((from.1 + (to.1 - from.1) * t) * unmul)
+            data[i + 2] = byte((from.2 + (to.2 - from.2) * t) * unmul)
         }
         let out = NSImage(size: NSSize(width: side, height: side))
         out.addRepresentation(rep)

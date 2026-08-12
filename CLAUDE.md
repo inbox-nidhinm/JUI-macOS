@@ -252,18 +252,35 @@ position and undo all survive. Bumping `docVersion` would reload the document
 and throw the caret to the end of the note.
 
 **The Dock icon follows the theme, but only while running.** `AppIcon` in
-`Theme.swift` recolours `AppIcon.icns` — a two-tone image, a gold field with a
-cream motif — by mapping those onto `sticky` and `sheet`, reading each pixel's
-mix off its blue channel (57 vs 224, the widest monotonic gap between the two
-tones) so anti-aliased edges survive. Applied via
-`NSApplication.applicationIconImage` in `PlainEditorApp.init()` and on every
-`setTheme`, cached per theme.
+`Theme.swift` maps the icon's two tones — a gold field, a cream motif — onto
+`sticky` and `sheet`, applied via `NSApplication.applicationIconImage` in
+`PlainEditorApp.init()` and on every `setTheme`, cached per theme.
 
-The icon Finder, Launchpad, and a non-running Dock tile show is the `.icns`
-inside the bundle, which the code signature **seals**. Rewriting it breaks the
-seal and the app dies with "a sealed resource is missing or invalid" — the same
-failure the `ditto` flags exist to prevent. Don't try; there is no way to theme
-that half without per-theme icons baked at build time.
+Two things about it are load-bearing, and both were bugs first:
+
+1. **It recolours `NSWorkspace.icon(forFile: bundlePath)`, not `AppIcon.icns`.**
+   The raw asset is a full-bleed opaque square; macOS insets it to the
+   824-in-1024 grid and masks it to the system squircle before Finder ever shows
+   it. But `applicationIconImage` is drawn exactly as handed over — so
+   recolouring the raw file gave a Dock tile that was hard-cornered and visibly
+   larger than its neighbours. Starting from the composed icon inherits the right
+   geometry for whatever macOS is running, with no shape maths here to go stale.
+2. **The two endpoint tones are measured off the bitmap, not hardcoded.** The
+   `.icns` is colour-converted on its way into a `deviceRGB` bitmap, so the gold
+   arrives as `#F7C82D`, not the `#F9D039` the file contains. Constants taken
+   from the file left the motif a few percent short of `sheet`.
+
+Premultiplication matters too: undo it before reading a pixel's tone and redo it
+after, or the soft squircle edge reads as near-gold and picks up a bright fringe.
+
+The icon Finder, Launchpad, and a non-running Dock tile show comes from the
+`.icns` inside the bundle. `NSWorkspace.setIcon(_:forFile:)` *can* override it —
+this is what Granola does — but measured on a copy it writes an `Icon\r` at the
+bundle root and breaks the strict seal: `codesign --verify --deep --strict` then
+fails with "resource fork, Finder information, or similar detritus not allowed".
+The app still launches, plain `codesign --verify` still passes, and deleting the
+`Icon\r` restores the seal — so it's recoverable rather than fatal. It is
+deliberately not wired up; don't add it without making that trade consciously.
 
 **Bundled art must be tinted, not drawn raw.** All four PNGs are single-colour
 silhouettes with clean alpha. In SwiftUI use `.renderingMode(.template)` plus a
