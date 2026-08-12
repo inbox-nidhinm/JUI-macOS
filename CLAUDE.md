@@ -273,14 +273,31 @@ Two things about it are load-bearing, and both were bugs first:
 Premultiplication matters too: undo it before reading a pixel's tone and redo it
 after, or the soft squircle edge reads as near-gold and picks up a bright fringe.
 
-The icon Finder, Launchpad, and a non-running Dock tile show comes from the
-`.icns` inside the bundle. `NSWorkspace.setIcon(_:forFile:)` *can* override it —
-this is what Granola does — but measured on a copy it writes an `Icon\r` at the
-bundle root and breaks the strict seal: `codesign --verify --deep --strict` then
-fails with "resource fork, Finder information, or similar detritus not allowed".
-The app still launches, plain `codesign --verify` still passes, and deleting the
-`Icon\r` restores the seal — so it's recoverable rather than fatal. It is
-deliberately not wired up; don't add it without making that trade consciously.
+**And it persists past quit**, via `NSWorkspace.setIcon(_:forFile:)` on the
+bundle — the same thing pasting into a Get Info window does, and the mechanism
+Granola's write-up settled on. `applicationIconImage` alone dies with the
+process, so Finder (and a pinned Dock tile) reverted to the gold default.
+
+Three things hold this together:
+
+- **`prepare()` must run before any themed icon is applied, exactly once.** It
+  clears the previous run's override and captures the pristine artwork. Without
+  it the recolour would read its own output as the source and compound —
+  catastrophically, not subtly, since lilac's field and motif differ by 2 in blue
+  where the original gold and cream differ by 172.
+- **Cream removes the override rather than writing a copy of the default.** That
+  leaves no stale file, and restores the code seal exactly.
+- **The seal really does break for the other five.** `codesign --verify --deep
+  --strict` fails with "resource fork, Finder information, or similar detritus
+  not allowed" once the `Icon\r` exists. Verified that the app still launches
+  through LaunchServices, that plain `codesign --verify` still passes, and that
+  switching back to cream restores strict verification. The build output and the
+  shipped zip are never affected — `build.sh` rebuilds the bundle from scratch,
+  so only an installed copy that has been run carries the file.
+
+If JUI is ever notarised, this needs revisiting: notarisation would reject a
+bundle carrying that file, though the artifact you submit is built fresh and so
+would be clean.
 
 **Bundled art must be tinted, not drawn raw.** All four PNGs are single-colour
 silhouettes with clean alpha. In SwiftUI use `.renderingMode(.template)` plus a

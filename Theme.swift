@@ -109,17 +109,53 @@ enum Themes {
 // or invalid", so there is deliberately no attempt to.
 enum AppIcon {
     private static var cache: [String: NSImage] = [:]
+    private static var pristine: NSImage?
+
+    // Must run before any themed icon is applied, and exactly once.
+    //
+    // Clearing the override first is what keeps this correct across launches.
+    // The recolour derives its two endpoint tones from the source image, so if
+    // the source were a previously-persisted themed icon the remap would
+    // compound — and it would do so catastrophically rather than subtly, because
+    // lilac's field and motif differ by 2 in blue where the original gold and
+    // cream differ by 172. Reading the pristine icon means every theme is always
+    // computed from the artwork as drawn.
+    static func prepare() {
+        let path = Bundle.main.bundlePath
+        NSWorkspace.shared.setIcon(nil, forFile: path, options: [])
+        let base = NSWorkspace.shared.icon(forFile: path)
+        pristine = base.size.width > 0 ? base : nil
+    }
 
     static func apply(_ theme: Theme) {
-        if let image = image(for: theme) {
-            NSApplication.shared.applicationIconImage = image
-        }
+        guard let image = image(for: theme) else { return }
+        NSApplication.shared.applicationIconImage = image // the running app
+        persist(theme, image) // Finder, Launchpad, and the Dock after quitting
+    }
+
+    // Writes the icon onto the bundle itself — the same thing pasting into a Get
+    // Info window does, and the mechanism Granola settled on for this exact
+    // problem. applicationIconImage alone only lasts as long as the process, so
+    // quitting reverted the tile to the gold default.
+    //
+    // The cost, measured rather than assumed: this writes an `Icon\r` at the
+    // bundle root, after which `codesign --verify --deep --strict` fails with
+    // "resource fork, Finder information, or similar detritus not allowed".
+    // Plain `codesign --verify` still passes and the app still launches. It only
+    // ever affects an installed copy that has been run — the build output and the
+    // shipped zip are untouched, since build.sh rebuilds the bundle from scratch.
+    // Deleting the `Icon\r` restores the seal.
+    private static func persist(_ theme: Theme, _ image: NSImage) {
+        let path = Bundle.main.bundlePath
+        // cream is the artwork as drawn, so drop the override rather than
+        // writing a copy of the default over the top of it
+        let icon: NSImage? = theme.id == Themes.cream.id ? nil : image
+        NSWorkspace.shared.setIcon(icon, forFile: path, options: [])
     }
 
     private static func image(for theme: Theme) -> NSImage? {
         if let hit = cache[theme.id] { return hit }
-        let base = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
-        guard base.size.width > 0 else { return nil }
+        guard let base = pristine else { return nil }
         // cream is what the artwork was drawn in; leave it untouched
         let result = theme.id == Themes.cream.id
             ? base
@@ -168,7 +204,10 @@ enum AppIcon {
             lo = min(lo, blue)
             hi = max(hi, blue)
         }
-        guard hi - lo > 1 else { return nil } // not the two-tone artwork we expect
+        // A narrow spread means blue isn't separating this artwork's two tones, so
+        // the remap would amplify noise instead of mapping cleanly. Fail back to
+        // the untinted icon rather than producing something wrong.
+        guard hi - lo > 30 else { return nil }
         let span = hi - lo
         func byte(_ value: Double) -> UInt8 { UInt8(min(max(value, 0), 255)) }
 

@@ -2683,6 +2683,9 @@ struct PlainEditorApp: App {
     @StateObject private var store = NotesStore()
 
     init() {
+        // prepare() first: it clears any icon a previous run persisted onto the
+        // bundle and captures the pristine artwork to recolour from.
+        AppIcon.prepare()
         AppIcon.apply(Style.theme) // the saved theme's icon, from the first frame
     }
 
