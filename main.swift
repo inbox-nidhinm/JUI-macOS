@@ -223,6 +223,10 @@ final class NotesStore: ObservableObject {
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
             self?.saveNow()
+            // Only if the mood actually changed: a pinned Dock tile keeps showing
+            // the old icon until the Dock restarts, and there's no reason to
+            // disturb it on an ordinary quit.
+            if self?.themeChangedThisSession == true { AppIcon.refreshDockTile() }
         }
     }
 
@@ -466,6 +470,7 @@ final class NotesStore: ObservableObject {
     }
 
     @Published private(set) var themeID: String = Style.theme.id
+    private var themeChangedThisSession = false
 
     // Deliberately does NOT bump docVersion the way setFont does. A font change
     // reflows the document and can afford a reload; a theme change happens
@@ -478,6 +483,7 @@ final class NotesStore: ObservableObject {
         themeID = theme.id
         UserDefaults.standard.set(theme.id, forKey: "themeID")
         AppIcon.apply(theme) // the Dock icon follows too
+        themeChangedThisSession = true
     }
 
     func search(_ query: String) -> [SearchHit] {

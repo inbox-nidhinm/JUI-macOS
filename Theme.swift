@@ -153,6 +153,24 @@ enum AppIcon {
         NSWorkspace.shared.setIcon(icon, forFile: path, options: [])
     }
 
+    // The Dock keeps its own cache of a *pinned* tile's icon and only re-reads it
+    // when it restarts. Measured: touching the bundle and re-registering it with
+    // LaunchServices (`lsregister -f`) both leave the stale tile in place;
+    // relaunching the Dock is the only thing that clears it. launchd brings it
+    // straight back, so this costs a brief flash and nothing else.
+    //
+    // Called on quit rather than on the theme change, and only when the theme
+    // actually changed during the session. While the app is running the tile
+    // draws applicationIconImage and is already correct — the stale cache is only
+    // visible once the app is gone — so this way the flash never interrupts
+    // anyone mid-use, and quitting without changing mood leaves the Dock alone.
+    static func refreshDockTile() {
+        for dock in NSRunningApplication.runningApplications(
+            withBundleIdentifier: "com.apple.dock") {
+            dock.terminate()
+        }
+    }
+
     private static func image(for theme: Theme) -> NSImage? {
         if let hit = cache[theme.id] { return hit }
         guard let base = pristine else { return nil }

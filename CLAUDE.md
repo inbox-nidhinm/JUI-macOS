@@ -295,6 +295,21 @@ Three things hold this together:
   shipped zip are never affected — `build.sh` rebuilds the bundle from scratch,
   so only an installed copy that has been run carries the file.
 
+**A pinned Dock tile needs the Dock restarted.** `setIcon` updates Finder
+immediately, but the Dock keeps its own cache of a pinned tile's icon. Measured:
+`touch`ing the bundle and `lsregister -f` both leave the stale tile in place;
+only relaunching the Dock clears it (`AppIcon.refreshDockTile()`, which
+terminates `com.apple.dock` and lets launchd bring it back).
+
+That fires **on quit, and only if the theme changed during the session** —
+`NotesStore.themeChangedThisSession`. While the app is running the tile draws
+`applicationIconImage` and is already correct, so the stale cache is invisible
+until the app is gone; doing it at quit means the Dock never flashes mid-use, and
+an ordinary quit leaves the Dock alone entirely. Don't move this to `setTheme`.
+
+Granola reached for a private Dock API for the same problem. Restarting the Dock
+is public, and at this app's scale the difference doesn't justify the fragility.
+
 If JUI is ever notarised, this needs revisiting: notarisation would reject a
 bundle carrying that file, though the artifact you submit is built fresh and so
 would be clean.
