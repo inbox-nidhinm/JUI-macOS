@@ -477,6 +477,7 @@ final class NotesStore: ObservableObject {
         Style.theme = theme
         themeID = theme.id
         UserDefaults.standard.set(theme.id, forKey: "themeID")
+        AppIcon.apply(theme) // the Dock icon follows too
     }
 
     func search(_ query: String) -> [SearchHit] {
@@ -2680,6 +2681,10 @@ struct ContentView: View {
 @main
 struct PlainEditorApp: App {
     @StateObject private var store = NotesStore()
+
+    init() {
+        AppIcon.apply(Style.theme) // the saved theme's icon, from the first frame
+    }
 
     var body: some Scene {
         WindowGroup {

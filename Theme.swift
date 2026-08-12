@@ -94,6 +94,75 @@ enum Themes {
     }
 }
 
+// Recolours the Dock icon to match the theme.
+//
+// AppIcon.icns is a full-bleed gold field with a cream floral motif — exactly two
+// tones, plus the anti-aliased pixels between them. So it maps cleanly: the gold
+// becomes the theme's sticky, the cream becomes its sheet. Each pixel's mix is
+// read off its blue channel, which is where the two source tones sit furthest
+// apart (57 vs 224) and varies monotonically between them, so soft edges survive.
+//
+// IMPORTANT: this changes the icon of the *running* app only — Dock, ⌘-Tab, and
+// the About panel. The icon Finder and Launchpad show comes from AppIcon.icns
+// inside the bundle, which the code signature seals. Rewriting it would break
+// that seal and the app would refuse to launch with "a sealed resource is missing
+// or invalid", so there is deliberately no attempt to.
+enum AppIcon {
+    private static let goldBlue = 57.0 // #F9D039, the field
+    private static let creamBlue = 224.0 // #FDF2E0, the motif
+    private static var cache: [String: NSImage] = [:]
+
+    static func apply(_ theme: Theme) {
+        if let image = image(for: theme) {
+            NSApplication.shared.applicationIconImage = image
+        }
+    }
+
+    private static func image(for theme: Theme) -> NSImage? {
+        if let hit = cache[theme.id] { return hit }
+        guard let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+              let base = NSImage(contentsOf: url) else { return nil }
+        // cream is what the artwork was drawn in; leave it untouched
+        let result = theme.id == Themes.cream.id
+            ? base
+            : (recoloured(base, field: theme.sticky, motif: theme.sheet) ?? base)
+        cache[theme.id] = result
+        return result
+    }
+
+    private static func recoloured(_ base: NSImage, field: NSColor, motif: NSColor) -> NSImage? {
+        let side = 512 // ample for the Dock, which tops out around 256pt @2x
+        guard let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: side * 4, bitsPerPixel: 32),
+              let context = NSGraphicsContext(bitmapImageRep: rep)
+        else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        base.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+        NSGraphicsContext.restoreGraphicsState()
+
+        guard let data = rep.bitmapData,
+              let f = field.usingColorSpace(.sRGB),
+              let m = motif.usingColorSpace(.sRGB) else { return nil }
+        let from = (f.redComponent * 255, f.greenComponent * 255, f.blueComponent * 255)
+        let to = (m.redComponent * 255, m.greenComponent * 255, m.blueComponent * 255)
+        let span = creamBlue - goldBlue
+        func byte(_ value: Double) -> UInt8 { UInt8(min(max(value, 0), 255)) }
+
+        for i in stride(from: 0, to: side * side * 4, by: 4) {
+            let t = min(max((Double(data[i + 2]) - goldBlue) / span, 0), 1)
+            data[i] = byte(from.0 + (to.0 - from.0) * t)
+            data[i + 1] = byte(from.1 + (to.1 - from.1) * t)
+            data[i + 2] = byte(from.2 + (to.2 - from.2) * t)
+        }
+        let out = NSImage(size: NSSize(width: side, height: side))
+        out.addRepresentation(rep)
+        return out
+    }
+}
+
 // The row of mood dots. Each dot is its theme's sticky colour; the active one
 // carries a ring in that theme's open-note dot, a shade darker than the fill.
 // Tapping applies the theme immediately — there is no confirm step.

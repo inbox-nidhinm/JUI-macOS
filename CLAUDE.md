@@ -251,6 +251,20 @@ rewritten as an attribute-only edit on the existing storage — selection, scrol
 position and undo all survive. Bumping `docVersion` would reload the document
 and throw the caret to the end of the note.
 
+**The Dock icon follows the theme, but only while running.** `AppIcon` in
+`Theme.swift` recolours `AppIcon.icns` — a two-tone image, a gold field with a
+cream motif — by mapping those onto `sticky` and `sheet`, reading each pixel's
+mix off its blue channel (57 vs 224, the widest monotonic gap between the two
+tones) so anti-aliased edges survive. Applied via
+`NSApplication.applicationIconImage` in `PlainEditorApp.init()` and on every
+`setTheme`, cached per theme.
+
+The icon Finder, Launchpad, and a non-running Dock tile show is the `.icns`
+inside the bundle, which the code signature **seals**. Rewriting it breaks the
+seal and the app dies with "a sealed resource is missing or invalid" — the same
+failure the `ditto` flags exist to prevent. Don't try; there is no way to theme
+that half without per-theme icons baked at build time.
+
 **Bundled art must be tinted, not drawn raw.** All four PNGs are single-colour
 silhouettes with clean alpha. In SwiftUI use `.renderingMode(.template)` plus a
 `foregroundStyle` (that's how `Flourish`, `FolderSprig` and `OnboardingLogo`
