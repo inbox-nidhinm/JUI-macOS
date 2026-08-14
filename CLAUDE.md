@@ -165,9 +165,32 @@ Two consequences for any new SwiftUI you write:
 1. **`onChange(of:)` must use the single-parameter closure** — `{ new in … }`.
    The two-parameter `{ old, new in … }` form is macOS 14+. Every existing call
    site uses the old form on purpose.
-2. **Anything 14+ needs `if #available`.** There are currently exactly two gated
-   sites: `NSTextInsertionIndicator` (:698) and `onKeyPress` (:1758, via the
-   `PaletteArrowKeys` modifier, which degrades to Enter/mouse on 13).
+2. **Anything 14+ needs `if #available`.** There is now exactly **one** gated
+   site: `NSTextInsertionIndicator`, in `SmoothCaret`. ⌘K's arrow navigation used
+   to be the second, via `onKeyPress`; `HouseField` handles arrows through
+   AppKit's `doCommandBy` instead, which works on 13, so that gate is gone.
+
+### Text fields are `HouseField`, not SwiftUI's `TextField`
+
+SwiftUI gives no way to set a text field's selection colour — selections follow
+the view's `tint`, and the app tints to house ink for the caret, which painted
+selections in near-black and made selected text unreadable. Configuring the
+window's shared field editor doesn't hold either: AppKit re-runs
+`setUpFieldEditorAttributes` whenever a field takes focus and overwrites it
+(measured). That method *is* the hook it honours, so `HouseField` wraps an
+`NSTextField` whose cell overrides it.
+
+All five fields go through it — onboarding name, settings name, ⌘K query, folder
+rename, new folder. It also carries submit / cancel / arrow callbacks, the
+placeholder, and the ink-ladder step for the text.
+
+**`HouseField.Bed` is the non-obvious part.** The selection has to be one step
+away from whatever the field is sitting on. The editor selects panel-on-sheet,
+but the ⌘K palette's own background *is* the panel colour, so reusing that made
+the selection invisible — same colour on same colour. A field declared
+`bed: .panel` selects in sheet instead, which is also what the palette's result
+rows already highlight with. Get this wrong and the selection silently vanishes
+rather than looking wrong.
 
 ## Build & ship
 

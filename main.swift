@@ -1585,10 +1585,14 @@ final class PlainTextView: NSTextView {
 // (measured). That method is the hook it *does* honour, so the app brings its own
 // cell and gets the same pale selection the note editor uses.
 final class HouseTextFieldCell: NSTextFieldCell {
+    // Set per field: the selection has to be a step away from whatever the field
+    // is sitting on. See HouseField.Bed.
+    var selectionColor: NSColor?
+
     override func setUpFieldEditorAttributes(_ textObj: NSText) -> NSText {
         let editor = super.setUpFieldEditorAttributes(textObj)
         if let tv = editor as? NSTextView {
-            tv.selectedTextAttributes = [.backgroundColor: Style.selection]
+            tv.selectedTextAttributes = [.backgroundColor: selectionColor ?? Style.selection]
             tv.insertionPointColor = Style.ink
             // typewriter input here too, so a name or folder title isn't
             // silently given curly quotes
@@ -1608,12 +1612,26 @@ final class HouseNSTextField: NSTextField {
 }
 
 struct HouseField: NSViewRepresentable {
+    // Which tone the field is sitting on. The editor selects in panel-on-sheet,
+    // but that reads as nothing inside the ⌘K palette, whose own background is
+    // already the panel colour — so a field on panel selects in sheet instead.
+    // Either way the selection is one step away from its bed, which is the
+    // relationship the editor actually has.
+    enum Bed { case sheet, panel }
+
     @Binding var text: String
     var size: CGFloat = 13
+    var alpha: Double = 1 // which step of the ink ladder the text sits at
+    var bed: Bed = .sheet
     var centered = false
+    var placeholder = ""
     var focused = false
     var onSubmit: () -> Void = {}
     var onCancel: () -> Void = {}
+    // Return true to swallow the key. Handling arrows here rather than with
+    // SwiftUI's onKeyPress means ⌘K's arrow navigation works on macOS 13 too,
+    // where onKeyPress isn't available.
+    var onArrow: ((_ down: Bool) -> Bool)?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -1630,17 +1648,32 @@ struct HouseField: NSViewRepresentable {
     func updateNSView(_ field: HouseNSTextField, context: Context) {
         context.coordinator.parent = self
         if field.stringValue != text { field.stringValue = text }
-        field.font = NSFont(name: Style.fontFamily, size: size)
+        let font = NSFont(name: Style.fontFamily, size: size)
             ?? NSFont(name: "Courier", size: size)
-        field.textColor = Style.ink
+            ?? .monospacedSystemFont(ofSize: size, weight: .regular)
+        field.font = font
+        field.textColor = Style.ink.withAlphaComponent(alpha)
         field.alignment = centered ? .center : .left
-        if focused, field.window?.firstResponder !== field.currentEditor() {
-            DispatchQueue.main.async { field.window?.makeFirstResponder(field) }
+        (field.cell as? HouseTextFieldCell)?.selectionColor =
+            bed == .sheet ? Style.selection : Style.sheet
+        field.placeholderAttributedString = placeholder.isEmpty ? nil
+            : NSAttributedString(string: placeholder, attributes: [
+                .font: font,
+                .foregroundColor: Style.ink.withAlphaComponent(0.4), // inkFaint
+            ])
+        // Only on the false -> true transition, so an update pass can't steal
+        // focus back after someone has clicked away.
+        if focused != context.coordinator.wantsFocus {
+            context.coordinator.wantsFocus = focused
+            if focused {
+                DispatchQueue.main.async { field.window?.makeFirstResponder(field) }
+            }
         }
     }
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: HouseField
+        var wantsFocus = false
         init(_ parent: HouseField) { self.parent = parent }
 
         func controlTextDidChange(_ note: Notification) {
@@ -1659,6 +1692,10 @@ struct HouseField: NSViewRepresentable {
             case #selector(NSResponder.cancelOperation(_:)):
                 parent.onCancel()
                 return true
+            case #selector(NSResponder.moveDown(_:)):
+                return parent.onArrow?(true) ?? false
+            case #selector(NSResponder.moveUp(_:)):
+                return parent.onArrow?(false) ?? false
             default:
                 return false
             }
@@ -1964,34 +2001,11 @@ struct IconButton: View {
     }
 }
 
-// Arrow-key navigation needs macOS 14; on 13 the palette still works by typing
-// and pressing Enter, or with the mouse.
-struct PaletteArrowKeys: ViewModifier {
-    let down: () -> Void
-    let up: () -> Void
-
-    func body(content: Content) -> some View {
-        if #available(macOS 14.0, *) {
-            content
-                .onKeyPress(.downArrow) {
-                    down()
-                    return .handled
-                }
-                .onKeyPress(.upArrow) {
-                    up()
-                    return .handled
-                }
-        } else {
-            content
-        }
-    }
-}
-
 struct SearchPalette: View {
     @ObservedObject var store: NotesStore
     @State private var query = ""
     @State private var selected = 0
-    @FocusState private var focused: Bool
+    @State private var focused = false
 
     private var hits: [SearchHit] { store.search(query) }
 
@@ -2036,15 +2050,22 @@ struct SearchPalette: View {
                         .foregroundStyle(inkMuted)
                         .allowsHitTesting(false)
                 }
-                TextField("", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.custom("Courier", size: 14))
-                    .foregroundStyle(brownInk)
-                .focused($focused)
-                .onSubmit { activate(results, cmds) }
-                .modifier(PaletteArrowKeys(
-                    down: { selected = min(selected + 1, max(results.count + cmds.count - 1, 0)) },
-                    up: { selected = max(selected - 1, 0) }))
+                HouseField(
+                    text: $query,
+                    size: 14,
+                    bed: .panel,
+                    focused: focused,
+                    onSubmit: { activate(results, cmds) },
+                    onCancel: { store.searchShown = false },
+                    onArrow: { down in
+                        if down {
+                            selected = min(selected + 1, max(results.count + cmds.count - 1, 0))
+                        } else {
+                            selected = max(selected - 1, 0)
+                        }
+                        return true
+                    })
+                    .frame(height: 18)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 13)
@@ -2205,7 +2226,7 @@ struct ContentView: View {
     @State private var creatingFolder = false
     @State private var folderDraft = ""
     @State private var nameDraft = ""
-    @FocusState private var folderFieldFocused: Bool
+    @State private var folderFieldFocused = false
     @Namespace private var highlightNS
 
     // Exactly one highlight lives in the panel at a time, so hovering a folder
@@ -2654,17 +2675,17 @@ struct ContentView: View {
                 Spacer(minLength: folderSprigGap)
                 HStack(spacing: 6) {
                     if renamingFolder == folder {
-                        TextField("", text: $folderDraft)
-                            .textFieldStyle(.plain)
-                            .font(.custom("Courier", size: 13))
-                            .foregroundStyle(inkStrong)
-                            .focused($folderFieldFocused)
-                            .onSubmit {
+                        HouseField(
+                            text: $folderDraft, size: 13, alpha: 0.85,
+                            focused: folderFieldFocused,
+                            onSubmit: {
                                 _ = store.renameFolder(folder, to: folderDraft)
                                 renamingFolder = nil
-                            }
-                            .onExitCommand { renamingFolder = nil }
+                            },
+                            onCancel: { renamingFolder = nil })
+                            .frame(height: 16)
                             .onAppear { folderFieldFocused = true }
+                            .onDisappear { folderFieldFocused = false }
                     } else {
                         Text(folder.uppercased())
                             .font(.custom("Courier", size: 13))
@@ -2747,17 +2768,18 @@ struct ContentView: View {
     }
 
     private var folderNameField: some View {
-        TextField("folder name", text: $folderDraft)
-            .textFieldStyle(.plain)
-            .font(.custom("Courier", size: 13))
-            .foregroundStyle(inkStrong)
-            .focused($folderFieldFocused)
-            .onSubmit {
+        HouseField(
+            text: $folderDraft, size: 13, alpha: 0.85, bed: .panel,
+            placeholder: "folder name",
+            focused: folderFieldFocused,
+            onSubmit: {
                 store.createFolder(folderDraft)
                 creatingFolder = false
-            }
-            .onExitCommand { creatingFolder = false }
+            },
+            onCancel: { creatingFolder = false })
+            .frame(height: 16)
             .onAppear { folderFieldFocused = true }
+            .onDisappear { folderFieldFocused = false }
             .padding(.vertical, 9)
             .padding(.horizontal, 18)
     }
