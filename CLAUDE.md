@@ -278,6 +278,14 @@ is `linePitch` and the glyphs are the font's line height, so centring is half a
 leading of shift — applied to the ruling, so no baseline moves and selection,
 the caret and sticky anchors all stay where the layout manager put them.
 
+**Where the system and the ink ladder disagree, the ladder wins.** The system
+draws the past-notes glyph at `#967654`, which solves to roughly 0.68 of the ink
+over its background — between `inkMuted` (0.55) and `inkStrong` (0.85), on no
+rung. It is drawn `inkMuted`, which keeps the relationship the system is
+actually expressing (that glyph darker than the new-note plus, which is
+`#c6a78a` and *is* `inkFaint` to within a point per channel) without adding a
+fifth alpha step to a ladder that was deliberately collapsed to four.
+
 **Any gap that isn't a whole number of pitches walks the type off the grid.**
 That is why `paragraphSpacing` is exactly one pitch (a break skips one rule) and
 the bullet gap is exactly zero (list items take consecutive rules).

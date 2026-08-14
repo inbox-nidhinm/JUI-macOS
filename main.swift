@@ -2139,20 +2139,35 @@ struct IconButton: View {
     let systemName: String
     let help: String
     var active = false // keeps the hover background while whatever it toggles is open
+    // The system draws the two buttons at different weights: the past-notes
+    // glyph darker than the new-note plus. Kept on the ink ladder rather than
+    // matched exactly — see the note in CLAUDE.md.
+    var tone: Color = inkFaint
     let action: () -> Void
     @State private var hovering = false
+
+    // 60 across with a 14 radius in the system, which is 44 and 10 here — the
+    // same 16/22 the rest of it scales by.
+    private let side: CGFloat = 44
+    private let radius: CGFloat = 10
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(inkFaint)
-                .padding(8)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(tone)
+                .frame(width: side, height: side)
                 .background(
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(hovering || active ? panelColor : Color.clear)
+                    Group {
+                        // papered, like every other raised surface — clipped to
+                        // the button rather than left square behind it
+                        if hovering || active {
+                            panelColor.papered(.ui)
+                                .clipShape(RoundedRectangle(cornerRadius: radius))
+                        }
+                    }
                 )
-                .contentShape(RoundedRectangle(cornerRadius: 7))
+                .contentShape(RoundedRectangle(cornerRadius: radius))
         }
         .buttonStyle(.plain)
         .help(help)
@@ -2541,12 +2556,15 @@ struct ContentView: View {
             }
 
             if !store.hiddenShown, !store.onboardingShown {
-                HStack(spacing: 6) {
+                // 12 between the buttons in the system and 36 before them (a
+                // flex gap either side of a 12 spacer), which is 9 and 26 here.
+                HStack(spacing: 9) {
                     Text("\(store.wordCount)")
-                        .font(.custom("Courier", size: 10))
+                        .font(.custom("Courier", size: 14))
                         .foregroundStyle(inkFaint)
-                        .padding(.trailing, 6)
-                    IconButton(systemName: "text.justify.left", help: "Past notes", active: showNotes) {
+                        .padding(.trailing, 17)
+                    IconButton(systemName: "text.justify.left", help: "Past notes",
+                               active: showNotes, tone: inkMuted) {
                         withAnimation(.easeOut(duration: 0.15)) { showNotes.toggle() }
                     }
                     IconButton(systemName: "plus", help: "New note (⌘N)") {
@@ -2827,8 +2845,9 @@ struct ContentView: View {
                 .padding(.vertical, folderCellPadding)
                 .padding(.horizontal, 10)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(panelHighlight == .addFolder ? sheetColor : folderBaseColor)
+                    (panelHighlight == .addFolder ? sheetColor : folderBaseColor)
+                        .papered(.ui)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
                 )
                 .contentShape(Rectangle())
         }
@@ -2944,8 +2963,9 @@ struct ContentView: View {
             // they differ in size from note rows, and morphing between the two
             // shapes read as an arc. Their own tint just lightens on hover.
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(panelHighlight == .folder(folder) ? sheetColor : folderBaseColor)
+                (panelHighlight == .folder(folder) ? sheetColor : folderBaseColor)
+                    .papered(.ui)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
             )
             .contentShape(Rectangle())
         }
