@@ -132,9 +132,21 @@ are kept as belt-and-braces but are not sufficient alone. Don't add a third way.
 `NSTextInsertionIndicator` on macOS 14+ (:698). All three are needed. `SmoothCaret`
 draws it as a `CALayer`. Any new text field in the app should use it too.
 
-**Horizontal rules are a single no-break space** (`Style.hrMarker`) alone in a
-paragraph, with the line *drawn* in `drawBackground` (:1358). Not a character run —
-that's how they re-fit on resize. `loadAttr` migrates old `"───…"` notes (:553).
+**Horizontal rules are gone** on this branch. `---` + Return no longer becomes
+one, and none is drawn. A page that is already ruled cannot use one more line to
+mean "a break" — the two read as the same mark. `Style.hrMarker` survives, and
+so does the `loadAttr` migration from old `"───…"` runs, only so that a note
+which already contains a rule opens as a blank line instead of a stray
+box-drawing run. Nothing creates a new one.
+
+**Paragraph styles are rebuilt on load, never trusted from the file**
+(`loadAttr`). On a ruled page a stale `paragraphSpacing` doesn't merely look
+different — any gap that isn't a whole number of pitches walks the type off the
+ruling, a little further with every paragraph, and every note written before the
+grid existed carries the old value. Classification is by the line's own text
+(does it start with `Style.bulletPrefix`), not by `headIndent`, which is the
+attribute being rebuilt. `normalizeFonts` still reads `headIndent` at runtime,
+where the attribute is trustworthy.
 
 **Bullets are literal `"• "` text** plus `Style.bulletParagraph` (hanging indent).
 `normalizeFonts` (:1587) identifies them by `headIndent > 0` — if you change how

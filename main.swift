@@ -112,8 +112,11 @@ enum Style {
 
     // A horizontal rule is stored as a lone no-break space on its own
     // paragraph; the text view draws a full-width line over it.
+    // Horizontal rules are gone from the editing experience — the ruled page
+    // does that job now, and one more line cannot mean "a break" on a page made
+    // of lines. The marker survives only so notes that already contain one open
+    // as a blank line rather than as a stray box-drawing run.
     static let hrMarker = "\u{00A0}"
-    static let hrColor = NSColor(red: 173 / 255, green: 158 / 255, blue: 132 / 255, alpha: 1) // #AD9E84
     static let bulletPrefix = "• "
     static var bulletIndent: CGFloat {
         (bulletPrefix as NSString).size(withAttributes: [.font: baseFont]).width
@@ -1500,30 +1503,12 @@ final class PlainTextView: NSTextView {
                 let lineRange = ns.lineRange(for: NSRange(location: sel.location, length: 0))
                 let line = ns.substring(with: lineRange).trimmingCharacters(in: .newlines)
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
-                // "-" runs, including ones smart-dashes already turned into – or —
-                let dashWeight = trimmed.reduce(0) { count, ch in
-                    switch ch {
-                    case "-": return count + 1
-                    case "–": return count + 2 // en dash = 2 typed dashes
-                    case "—": return count + 3 // em dash = 3 typed dashes
-                    default: return count - 1000
-                    }
-                }
-                if dashWeight >= 3 {
-                    // "---" + Return → horizontal rule
-                    let contentRange = NSRange(location: lineRange.location, length: (line as NSString).length)
-                    if shouldChangeText(in: contentRange, replacementString: Style.hrMarker) {
-                        storage.replaceCharacters(
-                            in: contentRange,
-                            with: NSAttributedString(string: Style.hrMarker, attributes: Style.base))
-                        didChangeText()
-                        setSelectedRange(
-                            NSRange(location: lineRange.location + Style.hrMarker.utf16.count, length: 0))
-                        typingAttributes = Style.base
-                        super.insertNewline(sender)
-                        return
-                    }
-                }
+                // "---" + Return used to become a horizontal rule. Removed: on a
+                // ruled page the rule had nothing left to do — a page that is
+                // already lined cannot use one more line to mean "a break", and
+                // the two read as the same mark at a glance.
+                //
+                // Typing "---" now simply leaves "---" on the page.
                 if line.trimmingCharacters(in: .whitespaces) == "•" {
                     // empty bullet → remove it and drop back to normal text
                     let deleteRange = NSRange(location: lineRange.location, length: (line as NSString).length)
@@ -1625,29 +1610,6 @@ final class PlainTextView: NSTextView {
         rect.fill()
         Paper.sheet.draw(in: enclosingScrollView?.documentVisibleRect ?? bounds)
         drawRuling(in: rect)
-        guard let storage = textStorage, let lm = layoutManager, let tc = textContainer else { return }
-        let ns = storage.string as NSString
-        var lineStart = 0
-        while lineStart < ns.length {
-            let lineRange = ns.lineRange(for: NSRange(location: lineStart, length: 0))
-            let content = ns.substring(with: lineRange).trimmingCharacters(in: .newlines)
-            if content == Style.hrMarker {
-                let glyphRange = lm.glyphRange(forCharacterRange: lineRange, actualCharacterRange: nil)
-                let lineRect = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
-                let origin = textContainerOrigin
-                let pad = tc.lineFragmentPadding
-                let y = (lineRect.midY + origin.y).rounded() + 0.5
-                if y >= rect.minY - 2, y <= rect.maxY + 2 {
-                    let path = NSBezierPath()
-                    path.lineWidth = 1
-                    Style.hrColor.setStroke()
-                    path.move(to: NSPoint(x: origin.x + pad, y: y))
-                    path.line(to: NSPoint(x: origin.x + tc.size.width - pad, y: y))
-                    path.stroke()
-                }
-            }
-            lineStart = NSMaxRange(lineRange)
-        }
     }
 
     override func mouseMoved(with event: NSEvent) {
