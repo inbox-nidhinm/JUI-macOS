@@ -2222,6 +2222,7 @@ struct ContentView: View {
     @State private var panelLocation: String? // nil = root, else drilled-in folder
     @State private var hoveredFolder: String?
     @State private var hoveredBack = false
+    @State private var hoveredAdd = false
     @State private var renamingFolder: String?
     @State private var creatingFolder = false
     @State private var folderDraft = ""
@@ -2235,6 +2236,7 @@ struct ContentView: View {
         case none
         case note(String)
         case folder(String)
+        case addFolder
         case back
     }
 
@@ -2244,6 +2246,9 @@ struct ContentView: View {
     private var panelHighlight: PanelHighlight {
         if hoveredBack, panelLocation != nil {
             return .back
+        }
+        if hoveredAdd, panelLocation == nil {
+            return .addFolder
         }
         if let hovered = hoveredFolder, store.folders.contains(hovered) {
             return .folder(hovered)
@@ -2408,14 +2413,25 @@ struct ContentView: View {
     }
 
     // folders are laid out two-per-row above the notes
-    private var folderPairs: [[String]] {
-        stride(from: 0, to: store.folders.count, by: 2).map {
-            Array(store.folders[$0..<min($0 + 2, store.folders.count)])
+    // The grid is the folders followed by the add tile, so the tile flows with
+    // them and lands in the next free half-width slot rather than needing a row
+    // of its own.
+    private enum FolderItem: Hashable {
+        case folder(String)
+        case add
+    }
+
+    private var folderRows: [[FolderItem]] {
+        let items = store.folders.map { FolderItem.folder($0) } + [.add]
+        return stride(from: 0, to: items.count, by: 2).map {
+            Array(items[$0..<min($0 + 2, items.count)])
         }
     }
 
+    // The grid is never empty now — the add tile is always in it — so the
+    // divider only depends on there being notes under it.
     private var showsFolderDivider: Bool {
-        panelLocation == nil && !store.folders.isEmpty && !visiblePanelNotes.isEmpty
+        panelLocation == nil && !visiblePanelNotes.isEmpty
     }
 
     private var panelHeight: CGFloat {
@@ -2423,10 +2439,8 @@ struct ContentView: View {
         var rows = visiblePanelNotes.count
         if panelLocation == nil {
             if creatingFolder { rows += 1 }
-            if !folderPairs.isEmpty {
-                height += CGFloat(folderPairs.count) * folderCellHeight
-                    + CGFloat(folderPairs.count - 1) * 6 // grid row spacing
-            }
+            height += CGFloat(folderRows.count) * folderCellHeight
+                + CGFloat(folderRows.count - 1) * 6 // grid row spacing
             if showsFolderDivider { height += 13 }
         } else {
             rows += 1 // back row
@@ -2586,21 +2600,56 @@ struct ContentView: View {
             hoveredID = nil
             hoveredFolder = nil
             hoveredBack = false
+            hoveredAdd = false
         }
     }
 
     private var folderGrid: some View {
         VStack(spacing: 6) {
-            ForEach(Array(folderPairs.enumerated()), id: \.offset) { _, pair in
+            ForEach(Array(folderRows.enumerated()), id: \.offset) { _, row in
                 HStack(spacing: 6) {
-                    ForEach(pair, id: \.self) { folderCell($0) }
-                    if pair.count == 1 {
-                        Color.clear.frame(maxWidth: .infinity) // keep a lone folder half-width
+                    ForEach(row, id: \.self) { item in
+                        switch item {
+                        case .folder(let name): folderCell(name)
+                        case .add: addFolderCell
+                        }
+                    }
+                    if row.count == 1 {
+                        Color.clear.frame(maxWidth: .infinity) // keep a lone tile half-width
                     }
                 }
             }
         }
         .padding(.horizontal, 8)
+    }
+
+    // Same card as a folder, carrying the plus at the size the new-note button
+    // uses, so the two ways of adding something read as the same gesture.
+    private var addFolderCell: some View {
+        Button {
+            folderDraft = ""
+            creatingFolder = true
+            panelLocation = nil // folders are only ever made at root
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(inkFaint)
+                .frame(maxWidth: .infinity,
+                       minHeight: folderCellHeight - folderCellPadding * 2,
+                       maxHeight: folderCellHeight - folderCellPadding * 2)
+                .padding(.vertical, folderCellPadding)
+                .padding(.horizontal, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(panelHighlight == .addFolder ? sheetColor : folderBaseColor)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("New folder")
+        .onHover { inside in
+            withAnimation(.easeOut(duration: 0.15)) { hoveredAdd = inside }
+        }
     }
 
     private func noteRow(_ note: NoteMeta) -> some View {

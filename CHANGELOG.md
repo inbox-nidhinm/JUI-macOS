@@ -111,6 +111,11 @@ A plain writing pad for Juilee. Built July 16–17, 2026.
 
 ## Minor updates & polish
 
+- **New folder without the context menu**: the folder grid ends with a `+`
+  tile — same card as a folder, plus glyph at the size the new-note button
+  uses — so folders are made the same way notes are. It flows with the grid
+  rather than taking a row of its own, and takes the panel's single
+  highlight on hover like any other tile.
 - **Chrome**: cream traffic lights (true-size circles, hover reveals real
   colors); bottom-right icons with hover boxes and persistent active state;
   arrow cursor over all controls; click-anywhere panel dismissal; fade-only
