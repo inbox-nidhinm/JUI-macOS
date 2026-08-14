@@ -1049,7 +1049,7 @@ final class StickyView: NSView, NSTextViewDelegate {
         // rather than squaring off at the bounds behind them.
         NSGraphicsContext.saveGraphicsState()
         path.addClip()
-        Paper.sticky.draw(in: bounds)
+        Surface.sticky.draw(in: bounds)
         NSGraphicsContext.restoreGraphicsState()
         // The flourish, bottom-right and running off the edge — placed as
         // fractions of the stamp, which is how the system positions it
@@ -1663,7 +1663,7 @@ final class PlainTextView: NSTextView {
         super.drawBackground(in: rect)
         Style.sheet.setFill()
         rect.fill()
-        Paper.sheet.draw(in: enclosingScrollView?.documentVisibleRect ?? bounds)
+        Surface.page.draw(in: enclosingScrollView?.documentVisibleRect ?? bounds)
         drawRuling(in: rect)
     }
 
@@ -2194,7 +2194,7 @@ struct IconButton: View {
                         // papered, like every other raised surface — clipped to
                         // the button rather than left square behind it
                         if hovering || active {
-                            panelColor.papered(.ui)
+                            panelColor.papered(.button)
                                 .clipShape(RoundedRectangle(cornerRadius: radius))
                         }
                     }
@@ -2298,7 +2298,7 @@ struct SearchPalette: View {
         // Papered on the background rather than over the whole view: an overlay
         // would multiply the rows and their highlights too, printing ink that
         // is meant to sit *on* the card into it instead.
-        .background(panelColor.papered(.ui))
+        .background(panelColor.papered(.palette))
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
@@ -2379,7 +2379,7 @@ struct SearchPalette: View {
                 .padding(.vertical, 8)
             }
         }
-        .background(panelColor.papered(.ui))
+        .background(panelColor.papered(.palette))
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
@@ -2828,7 +2828,7 @@ struct ContentView: View {
         }
         .frame(width: 260)
         .frame(height: panelHeight)
-        .background(panelColor.papered(.ui))
+        .background(panelColor.papered(.folderPanel))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .arrowCursorZone()
         .contextMenu {
@@ -2883,7 +2883,7 @@ struct ContentView: View {
                 .padding(.horizontal, 10)
                 .background(
                     (panelHighlight == .addFolder ? sheetColor : folderBaseColor)
-                        .papered(.ui)
+                        .papered(.folderTile)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 )
                 .contentShape(Rectangle())
@@ -3000,7 +3000,7 @@ struct ContentView: View {
             // shapes read as an arc. Their own tint just lightens on hover.
             .background(
                 (panelHighlight == .folder(folder) ? sheetColor : folderBaseColor)
-                    .papered(.ui)
+                    .papered(.folderTile)
                     // The flourish is placed as fractions of the tile, the way
                     // the system places it (77.22/187 across, 132.84 wide on a
                     // 187 tile), and runs off the right and bottom edges — the

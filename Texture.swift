@@ -21,30 +21,6 @@ enum Paper: String {
     case sticky // sticky notes
     case ui     // panels, the ⌘K palette, folder cards
 
-    // Recovered from the Figma frames rather than guessed, by solving
-    //
-    //     result = base × (1 − a + a × texture)
-    //
-    // for `a` on each colour channel separately against the known theme colour,
-    // and keeping the answer only where the three channels agreed. The sheet
-    // solved cleanly at three-channel agreement; the panels sit far lighter.
-    //
-    // These are the numbers most likely to need taste applied to them, which is
-    // why they are one table rather than sprinkled through the views.
-    var opacity: CGFloat {
-        switch self {
-        case .sheet: return 0.50
-        // Recovered from the system's own sticky, which exports as a flat PNG —
-        // colour and paper already combined — so dividing it by the base gold
-        // gives the multiply it was drawn at. Its grain spans 0.045 between the
-        // 5th and 95th percentile; this stock reaches that at 46%, and matches
-        // the median tone there too. At the 0.35 it was, the spread came to
-        // 0.034 and the paper read as almost flat.
-        case .sticky: return 0.46
-        case .ui: return 0.25
-        }
-    }
-
     // How much of the photograph a surface sees.
     //
     // This, not opacity, is what decides whether paper reads as paper. A sticky
@@ -108,15 +84,74 @@ enum Paper: String {
         }
     }
 
-    func draw(in rect: NSRect) {
+    func draw(in rect: NSRect, strength: CGFloat) {
         guard let image = image, rect.width > 0, rect.height > 0 else { return }
         let scale = scale(covering: rect.size, image: image.size)
         let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
         image.draw(in: NSRect(x: rect.midX - size.width / 2,
                               y: rect.midY - size.height / 2,
                               width: size.width, height: size.height),
-                   from: .zero, operation: .multiply, fraction: opacity)
+                   from: .zero, operation: .multiply, fraction: strength)
     }
+}
+
+// How hard each surface takes its paper.
+//
+// Strength belongs to the *surface*, not to the stock — which is not what it
+// looked like at first. Every panel in the app shares one photograph, so one
+// number for it seemed obvious; the system varies it by nearly ten to one. The
+// folder panel and the raised buttons take their paper at almost full weight
+// while the ⌘K cards take theirs at a tenth, and papering them all alike left
+// the folder tiles barely separated from the panel they sit on.
+//
+// Every value here was recovered from a render of the node itself, by solving
+//
+//     result = base × (1 − a + a × stock)
+//
+// per channel against the token the surface is built from, and kept only where
+// the three channels agreed. Reading them off an exported PNG is not equivalent
+// and has been wrong twice: a 1px rule antialiases across two device pixels,
+// and a blend mode does not survive an SVG export at all.
+enum Surface {
+    case page        // #FDF0D9 sheet
+    case sticky      // #F7C82D sticky
+    case folderPanel // #ECDBBE panel — the pane the tiles sit on
+    case folderTile  // #F3E4CA folderBase — the tiles themselves
+    case palette     // #ECDBBE panel — the ⌘K cards
+    case button      // #ECDBBE panel — a raised icon button
+
+    var paper: Paper {
+        switch self {
+        case .page: return .sheet
+        case .sticky: return .sticky
+        case .folderPanel, .folderTile, .palette, .button: return .ui
+        }
+    }
+
+    var strength: CGFloat {
+        switch self {
+        case .page: return 0.50
+        // Recovered from the system's own sticky, which exports as a flat PNG —
+        // colour and paper already combined — so dividing it by the base gold
+        // gives the multiply it was drawn at. Its grain spans 0.045 between the
+        // 5th and 95th percentile; this stock reaches that at 46%, and matches
+        // the median tone there too.
+        case .sticky: return 0.46
+        // #D0C1A7 against #ECDBBE — a 0.88 multiply, uniform across channels.
+        case .folderPanel: return 0.93
+        // #E5D6BC against #F3E4CA — 0.937. Half the panel's, and that gap is
+        // the whole reason a tile reads as sitting *on* the pane: 21 levels of
+        // separation in the system against the 7 that one shared value gave.
+        case .folderTile: return 0.49
+        // #E7D7BE against #ECDBBE — 0.987, and both ⌘K cards agree to within a
+        // percent. Nearly clean paper; the card is doing the work, not the tooth.
+        case .palette: return 0.10
+        // #CEBFA6 — 0.873, the heaviest surface in the app.
+        case .button: return 0.98
+        }
+    }
+
+    func draw(in rect: NSRect) { paper.draw(in: rect, strength: strength) }
 }
 
 // The SwiftUI half. `.papered(.ui)` presses paper into whatever it is applied
@@ -128,13 +163,14 @@ enum Paper: String {
 // of against the colour it is supposed to be texturing, and a panel picks up a
 // darkened copy of whatever it happens to be sitting on.
 extension View {
-    func papered(_ paper: Paper) -> some View {
-        overlay(PaperOverlay(paper: paper)).compositingGroup()
+    func papered(_ surface: Surface) -> some View {
+        overlay(PaperOverlay(surface: surface)).compositingGroup()
     }
 }
 
 private struct PaperOverlay: View {
-    let paper: Paper
+    let surface: Surface
+    private var paper: Paper { surface.paper }
 
     var body: some View {
         GeometryReader { geo in
@@ -150,7 +186,7 @@ private struct PaperOverlay: View {
                     .frame(width: geo.size.width, height: geo.size.height)
                     .clipped()
                     .blendMode(.multiply)
-                    .opacity(paper.opacity)
+                    .opacity(surface.strength)
             }
         }
         .allowsHitTesting(false)
