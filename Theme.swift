@@ -108,6 +108,19 @@ enum Themes {
 // that seal and the app would refuse to launch with "a sealed resource is missing
 // or invalid", so there is deliberately no attempt to.
 enum AppIcon {
+    // On the re-JUI branch the icon is a *fixed* mark — the cream flourish on
+    // black, shipped as AppIconRe.icns — so the rebuild is never mistaken for
+    // the real app in the Dock, the ⌘-Tab strip or Finder, whatever mood either
+    // one is set to. A dark icon also can't be produced by the recolour below,
+    // which maps the artwork's two tones onto two *theme* colours and so is
+    // light by construction.
+    //
+    // That makes the recolour, the persisted override and the Dock restart dead
+    // weight, so they are switched off here at the root rather than left half
+    // running. The call sites in main.swift are untouched, which keeps this a
+    // one-line decision to reverse.
+    static let followsTheme = false
+
     private static var cache: [String: NSImage] = [:]
     private static var pristine: NSImage?
 
@@ -128,6 +141,9 @@ enum AppIcon {
     }
 
     static func apply(_ theme: Theme) {
+        // Doing nothing leaves the bundle's own icon in place, which is exactly
+        // what a fixed mark wants.
+        guard followsTheme else { return }
         guard let image = image(for: theme) else { return }
         NSApplication.shared.applicationIconImage = image // the running app
         persist(theme, image) // Finder, Launchpad, and the Dock after quitting
@@ -165,6 +181,9 @@ enum AppIcon {
     // visible once the app is gone — so this way the flash never interrupts
     // anyone mid-use, and quitting without changing mood leaves the Dock alone.
     static func refreshDockTile() {
+        // The tile never changes here, so restarting the Dock on quit would be
+        // a visible flash bought for nothing.
+        guard followsTheme else { return }
         for dock in NSRunningApplication.runningApplications(
             withBundleIdentifier: "com.apple.dock") {
             dock.terminate()

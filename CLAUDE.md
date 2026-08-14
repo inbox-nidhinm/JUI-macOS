@@ -205,6 +205,7 @@ Three values at the top of `build.sh` are the entire divergence:
 | `NAME` (app, executable, zip) | `JUI` | `re-JUI` |
 | `BUNDLE_ID` | `com.nidhin.jui` | `com.nidhin.jui.re` |
 | `COUNTER` | `build-number` | `build-number-re` |
+| `ICON` | `AppIcon.icns` | `AppIconRe.icns` |
 
 They are stamped into the bundle at build time with `PlistBuddy`, alongside the
 `CFBundleVersion` stamp that was already there. **The source `Info.plist` is
@@ -227,6 +228,27 @@ What each one buys:
 
 `.gitignore` matches build products as `*.app/` and `*.zip` rather than by name,
 so neither branch's bundle can be committed by the other's build.
+
+### The icon here is fixed, and that switches a whole mechanism off
+
+`AppIconRe.icns` is the cream flourish (`#F2E3C9`) on pure black — full-bleed
+1024², the same single-image structure the original `.icns` uses, and it is
+copied in *as* `AppIcon.icns` so `CFBundleIconFile` needs no change.
+
+It deliberately **does not follow the theme**. Two reasons: the two builds have
+to be told apart at a glance in the Dock, ⌘-Tab and Finder whatever mood either
+is set to; and a dark icon is not something the recolour could produce anyway,
+since it maps the artwork's two tones onto two *theme* colours and is therefore
+light by construction.
+
+So `AppIcon.followsTheme` (`Theme.swift`) is `false` here, and `apply` and
+`refreshDockTile` return immediately. Everything the main branch's write-up
+describes — the persisted `Icon\r` override, the broken strict code seal, the
+Dock restart on quit — **does not happen on this branch**, and the strict
+verification `build.sh` runs stays passing on an installed copy. `prepare()`
+still runs, harmlessly: it clears any override a previous run left behind.
+
+The call sites in `main.swift` are untouched, so re-enabling is one line.
 
 The scratch vault at `~/Library/Application Support/re-JUI/Notes` was seeded
 with a **copy** of the real notes, so the redesign is judged against real prose

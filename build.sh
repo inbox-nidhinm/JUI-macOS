@@ -22,6 +22,7 @@ cd "$(dirname "$0")"
 NAME="re-JUI"
 BUNDLE_ID="com.nidhin.jui.re"
 COUNTER="build-number-re"
+ICON="AppIconRe.icns" # copied in as AppIcon.icns; main ships plain AppIcon.icns
 
 APP="$NAME.app"
 ZIP="$NAME.zip"
@@ -49,9 +50,14 @@ for key in CFBundleName CFBundleDisplayName CFBundleExecutable; do
 done
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" \
   "$APP/Contents/Info.plist" > /dev/null
-for asset in AppIcon.icns Flourish.png StickyFlower.png FolderSprig.png OnboardingLogo.png; do
+for asset in Flourish.png StickyFlower.png FolderSprig.png OnboardingLogo.png; do
   [ -f "$asset" ] && cp "$asset" "$APP/Contents/Resources/$asset"
 done
+
+# The icon is copied separately because this branch ships a different one. It
+# still lands as AppIcon.icns, which is what CFBundleIconFile in Info.plist
+# names — so the source plist stays describing the real app here too.
+cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
 
 for arch in arm64 x86_64; do
   swiftc -O -parse-as-library -swift-version 5 \
