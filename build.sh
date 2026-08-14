@@ -59,6 +59,19 @@ done
 # names — so the source plist stays describing the real app here too.
 cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
 
+# Textures ship as a directory rather than by name. The rebuild adds and drops
+# these constantly, and the old per-asset loop above fails silently when someone
+# adds a file and forgets to list it — the app just draws nothing, on a branch
+# where drawing nothing and drawing a very subtle grain look identical.
+#
+# Art/Vectors and Art/Reference are deliberately not copied: SVG sources are
+# compiled to Swift paths ahead of time, and reference material is for us.
+if [ -d Art/Textures ] && [ -n "$(ls -A Art/Textures 2>/dev/null)" ]; then
+  mkdir -p "$APP/Contents/Resources/Textures"
+  cp Art/Textures/*.png "$APP/Contents/Resources/Textures/" 2>/dev/null
+  echo "Textures: shipped $(ls -1 Art/Textures/*.png 2>/dev/null | wc -l | tr -d ' ')"
+fi
+
 for arch in arm64 x86_64; do
   swiftc -O -parse-as-library -swift-version 5 \
     -target "$arch-apple-macos$DEPLOY_TARGET" \
