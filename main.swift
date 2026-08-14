@@ -66,10 +66,38 @@ enum Style {
             }
         }
     }
+    // MARK: Ruled paper
+
+    static let lineSpacing: CGFloat = 4
+
+    // One spacing for the whole page, printed whether or not anything is
+    // written on it — a ruled sheet, not a guide drawn around the text.
+    //
+    // Setting that pitch to the *text's own* line height is what keeps type
+    // sitting on the ruling instead of drifting across it, and it means the
+    // leading stays exactly as it was: this is the existing metric, read back
+    // rather than a new one imposed.
+    static var linePitch: CGFloat {
+        NSLayoutManager().defaultLineHeight(for: baseFont) + lineSpacing
+    }
+
+    // Measured off the Figma frames: the ruling darkens whatever paper it
+    // crosses by a uniform 4.7%, and by the same 4.7% on all three channels
+    // (243/228/204 → 232/217/194). So it is a *tonal* operation, not a colour —
+    // which is why it is a neutral grey multiplied rather than a token. One
+    // value is then correct in all six themes, and it stays correct over the
+    // paper texture's creases, where a flat colour would go lighter than the
+    // paper it sits on and read as a highlight instead of a rule.
+    static let ruleTone = NSColor(white: 0.953, alpha: 1)
+
     static var paragraph: NSParagraphStyle {
         let p = NSMutableParagraphStyle()
-        p.lineSpacing = 4
-        p.paragraphSpacing = 24
+        p.lineSpacing = lineSpacing
+        // A whole pitch, so a paragraph break is exactly one blank rule and the
+        // grid survives it. This was 24 against a pitch of ~21 — close enough
+        // to look deliberate, far enough that type walked off the ruling a
+        // little further with every paragraph.
+        p.paragraphSpacing = linePitch
         p.alignment = .justified // flush both margins, last line falls left
         return p
     }
@@ -89,8 +117,12 @@ enum Style {
     // between list items than between prose paragraphs
     static var bulletParagraph: NSParagraphStyle {
         let p = NSMutableParagraphStyle()
-        p.lineSpacing = 4
-        p.paragraphSpacing = 8
+        p.lineSpacing = lineSpacing
+        // Zero rather than the old 8, for the same reason paragraphs take a
+        // whole pitch: any gap that isn't a multiple of the ruling walks the
+        // list off the grid. Zero also keeps list items tighter than prose,
+        // which is what the 8 was there for.
+        p.paragraphSpacing = 0
         p.headIndent = bulletIndent
         return p
     }
@@ -1484,8 +1516,82 @@ final class PlainTextView: NSTextView {
 
     // Draw horizontal rules: any paragraph holding just the hr marker gets a
     // 1pt line across the full text column, at whatever the current width is.
+    // The ruled page.
+    //
+    // Drawn here, in the text view, rather than behind it with the paper —
+    // because ruling is the thing the eye tracks, and it has to travel with the
+    // words when the page scrolls. The paper grain doesn't: nobody reads grain
+    // as a landmark, so it stays with the window and only the ruling moves.
+    //
+    // Fixed pitch means it does not consult the text at all beyond finding
+    // where the first line sits. It rules the empty part of the page exactly as
+    // densely as the written part, which is the whole difference between paper
+    // and a text decoration.
+    private func drawRuling(in rect: NSRect) {
+        guard let lm = layoutManager, let tc = textContainer,
+              let ctx = NSGraphicsContext.current else { return }
+        let pitch = Style.linePitch
+        guard pitch > 1 else { return }
+
+        // Anchor on the first line's box, so ruling and type share one grid
+        // from the top of the page down. The extra line fragment is what
+        // answers for an empty document, where there is no glyph to ask about.
+        let first = lm.numberOfGlyphs > 0
+            ? lm.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil)
+            : lm.extraLineFragmentRect
+        let origin = textContainerOrigin
+        let anchor = first.maxY + origin.y
+        let left = origin.x + tc.lineFragmentPadding
+        let right = origin.x + tc.size.width - tc.lineFragmentPadding
+        guard right > left else { return }
+
+        // Start at the first rule at or above the dirty rect rather than at the
+        // top of the document — on a long note that is the difference between
+        // drawing a dozen lines and drawing thousands on every scroll tick.
+        let steps = max(0, ((rect.minY - anchor) / pitch).rounded(.down))
+        var y = anchor + steps * pitch
+
+        let path = NSBezierPath()
+        path.lineWidth = 1
+        while y <= rect.maxY + 1 {
+            if y >= rect.minY - 1 {
+                let py = y.rounded() + 0.5 // land on the pixel, not across two
+                path.move(to: NSPoint(x: left, y: py))
+                path.line(to: NSPoint(x: right, y: py))
+            }
+            y += pitch
+        }
+
+        ctx.saveGraphicsState()
+        ctx.cgContext.setBlendMode(.multiply)
+        Style.ruleTone.setStroke()
+        path.stroke()
+        ctx.restoreGraphicsState()
+    }
+
+    // The page is painted here — colour, then paper, then ruling — rather than
+    // behind the text view in SwiftUI.
+    //
+    // It has to be. A blend can only see what is already in its own graphics
+    // context, and this view composites into a transparent layer of its own, so
+    // a multiply drawn here against a background living *behind* the view finds
+    // nothing to darken and paints its source colour flat instead. That failed
+    // in the most misleading way available: the ruling came out as pale lines
+    // over the paper rather than faint creases in it, which reads as a colour
+    // mistake and isn't one.
+    //
+    // The paper is pinned to the viewport rather than to the document. Grain is
+    // not something the eye tracks, so a sheet that stays put while the words
+    // move over it looks like a page being written on; grain that scrolls looks
+    // like a roll of paper, and would have to stretch a photograph over the
+    // whole height of a long note. The ruling does the opposite and travels
+    // with the text, because ruling is exactly what the eye does track.
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
+        Style.sheet.setFill()
+        rect.fill()
+        Paper.sheet.draw(in: enclosingScrollView?.documentVisibleRect ?? bounds)
+        drawRuling(in: rect)
         guard let storage = textStorage, let lm = layoutManager, let tc = textContainer else { return }
         let ns = storage.string as NSString
         var lineStart = 0
@@ -1722,6 +1828,11 @@ struct RichTextEditor: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
+        // The paper is drawn pinned to the viewport, so the scrolled-region
+        // blit AppKit does by default would smear it down the page instead of
+        // repainting it in place. Costs a full background redraw per scroll
+        // tick, which is one cached image draw and a few dozen hairlines.
+        scroll.contentView.copiesOnScroll = false
 
         // manual TextKit 1 stack so the custom layout manager controls
         // selection background drawing
@@ -2277,6 +2388,9 @@ struct ContentView: View {
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
+            // Bare colour: the textured page is painted by the text view on
+            // top of this, which is the only place a multiply can see what it
+            // is blending against. This stays as the ground beneath it.
             sheetColor.ignoresSafeArea()
 
             RichTextEditor(store: store)

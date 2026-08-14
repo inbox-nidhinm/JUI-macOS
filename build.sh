@@ -66,16 +66,39 @@ cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
 #
 # Art/Vectors and Art/Reference are deliberately not copied: SVG sources are
 # compiled to Swift paths ahead of time, and reference material is for us.
-if [ -d Art/Textures ] && [ -n "$(ls -A Art/Textures 2>/dev/null)" ]; then
-  mkdir -p "$APP/Contents/Resources/Textures"
-  cp Art/Textures/*.png "$APP/Contents/Resources/Textures/" 2>/dev/null
-  echo "Textures: shipped $(ls -1 Art/Textures/*.png 2>/dev/null | wc -l | tr -d ' ')"
+#
+# The sources are 4096px colour PNGs at ~10MB each — 31MB against an app that
+# was under 1MB. What ships is derived: downsampled, greyscale, JPEG.
+#
+# Greyscale because the textures are neutral by design and the colour channels
+# carry nothing. JPEG because photographic grain is precisely what PNG is worst
+# at, and because the loss it adds is far below the loss the downsample already
+# costs — measured at 0.88 levels of error against 0.81 for lossless at the same
+# size, on a surface multiplied at 50%. A fifth of the size for no visible
+# difference.
+#
+# Cached on modification time: converting three 4096px photographs takes long
+# enough to be irritating on every rebuild, and these change rarely.
+if [ -d Art/Textures ] && [ -n "$(ls -A Art/Textures/*.png 2>/dev/null)" ]; then
+  mkdir -p .texcache "$APP/Contents/Resources/Textures"
+  for src in Art/Textures/*.png; do
+    base=$(basename "$src" .png)
+    out=".texcache/$base.jpg"
+    if [ ! -f "$out" ] || [ "$src" -nt "$out" ]; then
+      sips -Z 2048 -s format jpeg -s formatOptions 80 \
+        --matchTo '/System/Library/ColorSync/Profiles/Generic Gray Profile.icc' \
+        "$src" --out "$out" > /dev/null 2>&1
+      echo "Textures: rebuilt $base.jpg"
+    fi
+    cp "$out" "$APP/Contents/Resources/Textures/$base.jpg"
+  done
+  echo "Textures: shipped $(ls -1 "$APP/Contents/Resources/Textures" | wc -l | tr -d ' ') ($(du -sh "$APP/Contents/Resources/Textures" | cut -f1))"
 fi
 
 for arch in arm64 x86_64; do
   swiftc -O -parse-as-library -swift-version 5 \
     -target "$arch-apple-macos$DEPLOY_TARGET" \
-    main.swift Theme.swift Onboarding.swift -o "/tmp/jui-$arch"
+    main.swift Theme.swift Texture.swift Onboarding.swift -o "/tmp/jui-$arch"
 done
 lipo -create /tmp/jui-arm64 /tmp/jui-x86_64 -output "$APP/Contents/MacOS/$NAME"
 rm -f /tmp/jui-arm64 /tmp/jui-x86_64
