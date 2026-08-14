@@ -2278,6 +2278,13 @@ struct SearchPalette: View {
                 HouseField(
                     text: $query,
                     size: 14,
+                    // Stays `.panel` even though the card is now built on the
+                    // sheet token. Bed is about the tone the field actually
+                    // sits on, not the token it started from: paper at 75%
+                    // takes the card down to roughly panel's own lightness, so
+                    // selecting in panel would be the invisible same-on-same
+                    // this setting exists to avoid. `.panel` selects in sheet,
+                    // which stays a clear step lighter than the card.
                     bed: .panel,
                     focused: focused,
                     onSubmit: { activate(results, cmds) },

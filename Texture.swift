@@ -41,24 +41,6 @@ enum Paper: String {
         case window(CGFloat)
     }
 
-    var fit: Fit {
-        switch self {
-        // Both cover. The page is big enough to hold a whole sheet, and the
-        // panels *want* the whole sheet shrunk into them: a crop carries the
-        // photograph's large-scale mottling at full size, and a 260pt panel is
-        // small enough that one streak crosses the whole thing. Covering
-        // averages that away and leaves even tooth. Measured against the
-        // system's panel, this is a grain spread of 0.086 where the crop gave
-        // 0.122 — the system's own is 0.085.
-        case .sheet, .ui: return .cover
-        // The sticky is the exception, and the reason the mechanism exists. At
-        // ~170pt across, covering shrinks the grain twelvefold into flat
-        // colour; 0.5 puts one image pixel on one Retina pixel, which is both
-        // the sharpest the file draws and the grain size the system shows.
-        case .sticky: return .window(0.5)
-        }
-    }
-
     // Bundled as greyscale JPEG, built from the full-resolution sources in
     // Art/Textures by build.sh. JPEG rather than PNG because the error it adds
     // is far below the error the downsample already costs — measured at 0.88
@@ -78,27 +60,29 @@ enum Paper: String {
     // Aspect-fill, for the views AppKit draws by hand. Filling rather than
     // stretching keeps the grain proportional when a surface is a different
     // shape from the photograph, which every one of them is.
+    func draw(in rect: NSRect, fit: Fit, strength: CGFloat) {
+        guard let image = image, rect.width > 0, rect.height > 0 else { return }
+        let scale = fit.scale(covering: rect.size, image: image.size)
+        let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+        image.draw(in: NSRect(x: rect.midX - size.width / 2,
+                              y: rect.midY - size.height / 2,
+                              width: size.width, height: size.height),
+                   from: .zero, operation: .multiply, fraction: strength)
+    }
+}
+
+extension Paper.Fit {
     // Shared by both halves so an AppKit surface and a SwiftUI one can never
     // drift into showing the same stock at two different grains.
     func scale(covering surface: CGSize, image: CGSize) -> CGFloat {
         let cover = max(surface.width / image.width, surface.height / image.height)
-        switch fit {
+        switch self {
         case .cover: return cover
         // Never smaller than cover, or the crop wouldn't reach the edges — a
         // panel wider than the window still gets filled, it just isn't shrunk
         // to fit inside it.
         case .window(let k): return max(k, cover)
         }
-    }
-
-    func draw(in rect: NSRect, strength: CGFloat) {
-        guard let image = image, rect.width > 0, rect.height > 0 else { return }
-        let scale = scale(covering: rect.size, image: image.size)
-        let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
-        image.draw(in: NSRect(x: rect.midX - size.width / 2,
-                              y: rect.midY - size.height / 2,
-                              width: size.width, height: size.height),
-                   from: .zero, operation: .multiply, fraction: strength)
     }
 }
 
@@ -150,15 +134,51 @@ enum Surface {
         // the whole reason a tile reads as sitting *on* the pane: 21 levels of
         // separation in the system against the 7 that one shared value gave.
         case .folderTile: return 0.49
-        // #E7D7BE against #ECDBBE — 0.987, and both ⌘K cards agree to within a
-        // percent. Nearly clean paper; the card is doing the work, not the tooth.
-        case .palette: return 0.10
+        // #E7D7BE against #ECDBBE — 0.979. Light, because the card's texture
+        // shows as flecks rather than as tooth; the fit above is what carries
+        // it, not the strength.
+        //
+        // This one briefly went to 0.75 on a sheet base, reading a 95th
+        // percentile one level above the panel colour as proof of a lighter
+        // ground. It was a JPEG artefact. The card's channel ratios settle it
+        // properly — 1 : 0.931 : 0.823, against panel's 1 : 0.928 : 0.805 and
+        // sheet's 1 : 0.949 : 0.858 — and a neutral multiply preserves those
+        // ratios exactly, so they identify the base whatever the strength.
+        // Sheet is the flatter of the two, which is why building on it turned
+        // the card grey-green beside the warm panels.
+        case .palette: return 0.30
         // #CEBFA6 — 0.873, the heaviest surface in the app.
         case .button: return 0.98
         }
     }
 
-    func draw(in rect: NSRect) { paper.draw(in: rect, strength: strength) }
+    // Fit belongs to the surface for the same reason strength does, and the two
+    // together decide what the paper looks like: strength sets the *tone* and
+    // fit sets the *grain size*. Matching one says nothing about the other, and
+    // getting that wrong has produced both a panel too blotchy and a card too
+    // flat, from the same file at sensible-looking numbers.
+    var fit: Paper.Fit {
+        switch self {
+        // Big enough to hold a whole sheet, and wanting it: a crop carries the
+        // photograph's large-scale mottling at full size, which in a 260pt
+        // panel puts one streak across the whole thing. Covering averages that
+        // away and leaves even tooth — a grain spread of 0.086 against the
+        // system's 0.085, where the crop gave 0.122.
+        case .page, .folderPanel, .folderTile, .button: return .cover
+        // Covering shrinks the grain twelvefold on a ~170pt stamp and the paper
+        // reads as flat colour. 0.5 puts one image pixel on one Retina pixel.
+        case .sticky: return .window(0.5)
+        // The ⌘K card is the interesting one. Its median sits close to its own
+        // base — 0.979 — but its darkest tenth reaches 0.911, and that gap is
+        // the signature of a light ground carrying sparse dark flecks rather
+        // than of uniform tooth. Covering would average those flecks into a
+        // flat wash, taking the whole card down with them; a crop keeps them
+        // their own size and leaves the ground alone.
+        case .palette: return .window(0.5)
+        }
+    }
+
+    func draw(in rect: NSRect) { paper.draw(in: rect, fit: fit, strength: strength) }
 }
 
 // The SwiftUI half. `.papered(.ui)` presses paper into whatever it is applied
@@ -182,7 +202,7 @@ private struct PaperOverlay: View {
     var body: some View {
         GeometryReader { geo in
             if let image = paper.image {
-                let scale = paper.scale(covering: geo.size, image: image.size)
+                let scale = surface.fit.scale(covering: geo.size, image: image.size)
                 Image(nsImage: image)
                     .resizable()
                     // sized explicitly rather than by aspectRatio(.fill), so a
