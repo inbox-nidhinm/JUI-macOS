@@ -50,7 +50,8 @@ for key in CFBundleName CFBundleDisplayName CFBundleExecutable; do
 done
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" \
   "$APP/Contents/Info.plist" > /dev/null
-for asset in Flourish.png StickyFlower.png FolderSprig.png OnboardingLogo.png; do
+for asset in Flourish.png StickyFlower.png FolderSprig.png OnboardingLogo.png \
+             StickyFlourish.png FolderFlourish.png; do
   [ -f "$asset" ] && cp "$asset" "$APP/Contents/Resources/$asset"
 done
 

@@ -34,7 +34,13 @@ enum Paper: String {
     var opacity: CGFloat {
         switch self {
         case .sheet: return 0.50
-        case .sticky: return 0.35
+        // Recovered from the system's own sticky, which exports as a flat PNG —
+        // colour and paper already combined — so dividing it by the base gold
+        // gives the multiply it was drawn at. Its grain spans 0.045 between the
+        // 5th and 95th percentile; this stock reaches that at 46%, and matches
+        // the median tone there too. At the 0.35 it was, the spread came to
+        // 0.034 and the paper read as almost flat.
+        case .sticky: return 0.46
         case .ui: return 0.25
         }
     }

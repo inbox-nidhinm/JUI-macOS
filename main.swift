@@ -26,6 +26,14 @@ let folderSprigImage: NSImage? = {
     else { return nil }
     return NSImage(contentsOf: url)
 }()
+// The system's folder flourish — a watermark filling most of the tile from the
+// top edge, not the small corner sprig it replaces. Rasterised from the file's
+// vector with its rotation and flip baked in.
+let folderFlourishImage: NSImage? = {
+    guard let url = Bundle.main.url(forResource: "FolderFlourish", withExtension: "png")
+    else { return nil }
+    return NSImage(contentsOf: url)
+}()
 var folderBaseColor: Color { Color(nsColor: Style.theme.folderBase) }
 let folderSprigHeight: CGFloat = 32
 let folderSprigWidth: CGFloat = 32 * (181.0 / 271.0) // keep the artwork's aspect
@@ -929,8 +937,11 @@ final class StickyTextView: NSTextView {
 }
 
 final class StickyView: NSView, NSTextViewDelegate {
+    // The system's flourish, rasterised from the file's own vector with its
+    // rotation and flip already baked in — see CLAUDE.md on why the transform
+    // is baked at build time rather than applied here.
     private static let flowerSource: NSImage? = {
-        guard let url = Bundle.main.url(forResource: "StickyFlower", withExtension: "png")
+        guard let url = Bundle.main.url(forResource: "StickyFlourish", withExtension: "png")
         else { return nil }
         return NSImage(contentsOf: url)
     }()
@@ -949,7 +960,9 @@ final class StickyView: NSView, NSTextViewDelegate {
         let out = NSImage(size: src.size)
         out.lockFocus()
         src.draw(at: .zero, from: .zero, operation: .sourceOver, fraction: 1)
-        theme.sheet.set()
+        // #ECDBBE in the system, which is the panel token — not sheet, which is
+        // what the old flower used.
+        theme.panel.set()
         NSRect(origin: .zero, size: src.size).fill(using: .sourceAtop)
         out.unlockFocus()
         flowerCache[theme.id] = out
@@ -1038,10 +1051,24 @@ final class StickyView: NSView, NSTextViewDelegate {
         path.addClip()
         Paper.sticky.draw(in: bounds)
         NSGraphicsContext.restoreGraphicsState()
-        // the little flower, bottom-left corner
-        Self.flower(for: Style.theme)?.draw(
-            in: NSRect(x: 10, y: 10, width: 20, height: 22),
-            from: .zero, operation: .sourceOver, fraction: 1)
+        // The flourish, bottom-right and running off the edge — placed as
+        // fractions of the stamp, which is how the system positions it
+        // (198.82/316.53 across, 208.64/330.24 down, 127.68 wide on a 316.53
+        // stamp). It reaches past the bottom edge by about 5% and is cut off by
+        // the clip above, which is deliberate in the design.
+        //
+        // Width drives the height through the artwork's own aspect rather than
+        // both coming from the stamp, so a sticky that isn't the system's
+        // proportions doesn't stretch the flowers.
+        if let flourish = Self.flower(for: Style.theme) {
+            let w = bounds.width * 0.4034
+            let h = w * (flourish.size.height / flourish.size.width)
+            let top = bounds.height * 0.6318
+            flourish.draw(
+                in: NSRect(x: bounds.width * 0.6281, y: bounds.height - top - h,
+                           width: w, height: h),
+                from: .zero, operation: .sourceOver, fraction: 1)
+        }
         NSGraphicsContext.restoreGraphicsState()
     }
 
@@ -2918,15 +2945,14 @@ struct ContentView: View {
             guard renamingFolder != folder else { return }
             panelLocation = folder
         } label: {
-            // sprig up top, name along the bottom, air in between
+            // Name along the bottom, air above it. The flourish used to sit
+            // here as a small sprig in the flow; in the system it is a
+            // watermark behind the whole tile, so it moved to the background
+            // and this holds the space it used to occupy — the cell's height is
+            // computed from these metrics.
             VStack(alignment: .leading, spacing: 0) {
-                if let sprig = folderSprigImage {
-                    Image(nsImage: sprig)
-                        .resizable()
-                        .renderingMode(.template) // so the sprig follows the theme
-                        .foregroundStyle(dividerColor)
-                        .frame(width: folderSprigWidth, height: folderSprigHeight)
-                }
+                Color.clear
+                    .frame(width: folderSprigWidth, height: folderSprigHeight)
                 Spacer(minLength: folderSprigGap)
                 HStack(spacing: 6) {
                     if renamingFolder == folder {
@@ -2965,6 +2991,25 @@ struct ContentView: View {
             .background(
                 (panelHighlight == .folder(folder) ? sheetColor : folderBaseColor)
                     .papered(.ui)
+                    // The flourish is placed as fractions of the tile, the way
+                    // the system places it (77.22/187 across, 132.84 wide on a
+                    // 187 tile), and runs off the right and bottom edges — the
+                    // clip below is what the design intends, not an accident.
+                    .overlay(alignment: .topLeading) {
+                        GeometryReader { geo in
+                            if let art = folderFlourishImage {
+                                let w = geo.size.width * 0.7104
+                                Image(nsImage: art)
+                                    .resizable()
+                                    .renderingMode(.template)
+                                    .foregroundStyle(panelColor)
+                                    .frame(width: w,
+                                           height: w * (art.size.height / art.size.width))
+                                    .offset(x: geo.size.width * 0.4130,
+                                            y: geo.size.height * 0.0036)
+                            }
+                        }
+                    }
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             )
             .contentShape(Rectangle())
