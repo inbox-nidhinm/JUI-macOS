@@ -1,5 +1,7 @@
-# Build products — regenerate with ./build.sh
-JUI.app/
-JUI.zip
+# Build products — regenerate with ./build.sh. Matched by shape rather than by
+# name so this branch's differently-named bundle is covered too, and so a build
+# of one never lands in a commit made on the other.
+*.app/
+*.zip
 
 .DS_Store

@@ -160,9 +160,17 @@ final class NotesStore: ObservableObject {
 
     // MARK: First run & display name
 
+    // The vault is named after the app rather than after the string "JUI", so a
+    // build carrying a different CFBundleName — the re-JUI look rebuild — keeps
+    // its own notes instead of writing into the shipping app's. For the real
+    // app this resolves to exactly what it always did.
+    static var appFolderName: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "JUI"
+    }
+
     static var defaultVaultDir: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("JUI/Notes", isDirectory: true)
+            .appendingPathComponent("\(appFolderName)/Notes", isDirectory: true)
     }
 
     // The single source of truth for the name: onboarding writes it, the
@@ -201,7 +209,8 @@ final class NotesStore: ObservableObject {
     init() {
         let fm = FileManager.default
         let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let defaultDir = base.appendingPathComponent("JUI/Notes", isDirectory: true)
+        let defaultDir = base.appendingPathComponent(
+            "\(Self.appFolderName)/Notes", isDirectory: true)
         // migrate notes saved under the app's old name
         let oldDir = base.appendingPathComponent("PlainEditor/Notes", isDirectory: true)
         if !fm.fileExists(atPath: defaultDir.path), fm.fileExists(atPath: oldDir.path) {

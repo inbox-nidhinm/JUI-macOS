@@ -192,6 +192,48 @@ the selection invisible — same colour on same colour. A field declared
 rows already highlight with. Get this wrong and the selection silently vanishes
 rather than looking wrong.
 
+## The `re-JUI` branch — a parallel app, not just a branch
+
+`re-JUI` is a ground-up rework of the app's *look*. It is built to install and
+run **beside** the shipping JUI, so the two can be compared side by side and a
+half-finished redesign never costs anyone their notes.
+
+Three values at the top of `build.sh` are the entire divergence:
+
+| | main | re-JUI |
+|---|---|---|
+| `NAME` (app, executable, zip) | `JUI` | `re-JUI` |
+| `BUNDLE_ID` | `com.nidhin.jui` | `com.nidhin.jui.re` |
+| `COUNTER` | `build-number` | `build-number-re` |
+
+They are stamped into the bundle at build time with `PlistBuddy`, alongside the
+`CFBundleVersion` stamp that was already there. **The source `Info.plist` is
+left describing the real app** — so merging this branch back is a matter of
+restoring those three lines, and nothing else.
+
+What each one buys:
+
+- **A separate bundle id is a separate `UserDefaults` domain.** Theme, name,
+  font, vault path and `onboardingCompleted` are all independent, which is why a
+  fresh `re-JUI` build opens on onboarding in cream while the real app stays on
+  whatever it was set to.
+- **A separate `CFBundleName` is a separate vault.** `NotesStore.appFolderName`
+  reads it and the vault becomes `~/Library/Application Support/<name>/Notes`,
+  so this build writes to `re-JUI/Notes`. That replaced a hardcoded `"JUI/Notes"`
+  in two places; on main it resolves to exactly what it always did. The fallback
+  is `"JUI"`, for the case where there is no bundle to read.
+- **A separate counter** keeps the two branches from conflicting on a one-line
+  file every time either of them builds.
+
+`.gitignore` matches build products as `*.app/` and `*.zip` rather than by name,
+so neither branch's bundle can be committed by the other's build.
+
+The scratch vault at `~/Library/Application Support/re-JUI/Notes` was seeded
+with a **copy** of the real notes, so the redesign is judged against real prose
+— real line lengths, real folders, a real sticky — rather than lorem ipsum.
+It is a copy: edits made in `re-JUI` never reach the real vault, and are also
+never carried back to it.
+
 ## Build & ship
 
 ```bash
@@ -224,7 +266,7 @@ cause. `build.sh` passes `--norsrc --noextattr` to `ditto` for exactly this
 reason. To check an archive before sending it:
 
 ```bash
-unzip -Z1 JUI.zip   # must show 12 entries, no ._ files, no __MACOSX
+unzip -Z1 JUI.zip   # must show 13 entries, no ._ files, no __MACOSX
 ```
 
 **Distribution caveat.** The app is only ad-hoc signed — notarization needs a paid

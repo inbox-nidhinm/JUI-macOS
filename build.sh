@@ -8,7 +8,23 @@
 set -e
 cd "$(dirname "$0")"
 
-APP="JUI.app"
+# --- identity ----------------------------------------------------------------
+# Everything that makes this a distinct app from the shipping JUI lives in these
+# three lines, and nowhere else. The re-JUI branch is a look rebuild: it has to
+# be installable and runnable *beside* the real app without touching its notes,
+# its settings or its Dock tile, so it gets its own name, its own bundle id
+# (hence its own UserDefaults domain and — via CFBundleName — its own vault),
+# and its own build counter so the two branches never fight over one number.
+#
+# Merging this branch back into main means restoring these three values. That is
+# the whole revert, which is why they are hoisted here rather than committed
+# into Info.plist.
+NAME="re-JUI"
+BUNDLE_ID="com.nidhin.jui.re"
+COUNTER="build-number-re"
+
+APP="$NAME.app"
+ZIP="$NAME.zip"
 DEPLOY_TARGET="13"
 
 rm -rf "$APP" # start clean so no stale resource breaks the signature seal
@@ -19,9 +35,19 @@ cp Info.plist "$APP/Contents/Info.plist"
 # indistinguishable when one works and the other doesn't. The user-facing
 # CFBundleShortVersionString in Info.plist is left alone. Stamped before signing:
 # editing Info.plist afterwards would break the signature seal.
-BUILD_NUMBER=$(( $(cat build-number 2>/dev/null || echo 0) + 1 ))
-echo "$BUILD_NUMBER" > build-number
+BUILD_NUMBER=$(( $(cat "$COUNTER" 2>/dev/null || echo 0) + 1 ))
+echo "$BUILD_NUMBER" > "$COUNTER"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" \
+  "$APP/Contents/Info.plist" > /dev/null
+
+# The identity above is stamped in here rather than kept in the source
+# Info.plist, so that file stays the canonical description of the real app.
+# CFBundleName is load-bearing beyond the menu bar: NotesStore derives the vault
+# folder from it, so this is also what keeps this build's notes out of JUI's.
+for key in CFBundleName CFBundleDisplayName CFBundleExecutable; do
+  /usr/libexec/PlistBuddy -c "Set :$key $NAME" "$APP/Contents/Info.plist" > /dev/null
+done
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" \
   "$APP/Contents/Info.plist" > /dev/null
 for asset in AppIcon.icns Flourish.png StickyFlower.png FolderSprig.png OnboardingLogo.png; do
   [ -f "$asset" ] && cp "$asset" "$APP/Contents/Resources/$asset"
@@ -32,7 +58,7 @@ for arch in arm64 x86_64; do
     -target "$arch-apple-macos$DEPLOY_TARGET" \
     main.swift Theme.swift Onboarding.swift -o "/tmp/jui-$arch"
 done
-lipo -create /tmp/jui-arm64 /tmp/jui-x86_64 -output "$APP/Contents/MacOS/JUI"
+lipo -create /tmp/jui-arm64 /tmp/jui-x86_64 -output "$APP/Contents/MacOS/$NAME"
 rm -f /tmp/jui-arm64 /tmp/jui-x86_64
 
 # Extended attributes from downloaded/rendered assets make codesign fail; clear
@@ -52,11 +78,11 @@ codesign --verify --deep --strict "$APP"
 # bundle as real files that aren't in the code seal, and the app then dies with
 # "a sealed resource is missing or invalid" — a launch failure that looks
 # nothing like its cause. Stripping them keeps the archive byte-clean.
-rm -f JUI.zip
-ditto -c -k --keepParent --norsrc --noextattr "$APP" JUI.zip
+rm -f "$ZIP"
+ditto -c -k --keepParent --norsrc --noextattr "$APP" "$ZIP"
 
-echo "Built $APP build $BUILD_NUMBER ($(lipo -archs "$APP/Contents/MacOS/JUI"), macOS $DEPLOY_TARGET+, signature verified)"
-echo "Packaged JUI.zip ($(du -h JUI.zip | cut -f1)) — on the receiving Mac: xattr -cr JUI.app"
+echo "Built $APP build $BUILD_NUMBER ($(lipo -archs "$APP/Contents/MacOS/$NAME"), macOS $DEPLOY_TARGET+, signature verified)"
+echo "Packaged $ZIP ($(du -h "$ZIP" | cut -f1)) — on the receiving Mac: xattr -cr $APP"
 
 # --- back up to GitHub -------------------------------------------------------
 # Records every build and pushes it, so the source is never only on this Mac.
