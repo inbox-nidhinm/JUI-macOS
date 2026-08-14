@@ -1575,6 +1575,97 @@ final class PlainTextView: NSTextView {
     }
 }
 
+// MARK: - House text field
+
+// SwiftUI's TextField gives no way to set its selection colour: selections follow
+// the view's tint, so tinting the caret to the house ink also painted selections
+// in near-black ink and made the selected text almost unreadable. Configuring the
+// window's shared field editor up front doesn't hold either — AppKit re-runs
+// `setUpFieldEditorAttributes` each time a field takes focus and overwrites it
+// (measured). That method is the hook it *does* honour, so the app brings its own
+// cell and gets the same pale selection the note editor uses.
+final class HouseTextFieldCell: NSTextFieldCell {
+    override func setUpFieldEditorAttributes(_ textObj: NSText) -> NSText {
+        let editor = super.setUpFieldEditorAttributes(textObj)
+        if let tv = editor as? NSTextView {
+            tv.selectedTextAttributes = [.backgroundColor: Style.selection]
+            tv.insertionPointColor = Style.ink
+            // typewriter input here too, so a name or folder title isn't
+            // silently given curly quotes
+            tv.isAutomaticQuoteSubstitutionEnabled = false
+            tv.isAutomaticDashSubstitutionEnabled = false
+            tv.isAutomaticTextReplacementEnabled = false
+        }
+        return editor
+    }
+}
+
+final class HouseNSTextField: NSTextField {
+    override class var cellClass: AnyClass? {
+        get { HouseTextFieldCell.self }
+        set { _ = newValue }
+    }
+}
+
+struct HouseField: NSViewRepresentable {
+    @Binding var text: String
+    var size: CGFloat = 13
+    var centered = false
+    var focused = false
+    var onSubmit: () -> Void = {}
+    var onCancel: () -> Void = {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> HouseNSTextField {
+        let field = HouseNSTextField()
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none // the pill behind it is the affordance
+        field.delegate = context.coordinator
+        field.stringValue = text
+        return field
+    }
+
+    func updateNSView(_ field: HouseNSTextField, context: Context) {
+        context.coordinator.parent = self
+        if field.stringValue != text { field.stringValue = text }
+        field.font = NSFont(name: Style.fontFamily, size: size)
+            ?? NSFont(name: "Courier", size: size)
+        field.textColor = Style.ink
+        field.alignment = centered ? .center : .left
+        if focused, field.window?.firstResponder !== field.currentEditor() {
+            DispatchQueue.main.async { field.window?.makeFirstResponder(field) }
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: HouseField
+        init(_ parent: HouseField) { self.parent = parent }
+
+        func controlTextDidChange(_ note: Notification) {
+            guard let field = note.object as? NSTextField else { return }
+            parent.text = field.stringValue
+        }
+
+        func control(
+            _ control: NSControl, textView: NSTextView,
+            doCommandBy selector: Selector
+        ) -> Bool {
+            switch selector {
+            case #selector(NSResponder.insertNewline(_:)):
+                parent.onSubmit()
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                parent.onCancel()
+                return true
+            default:
+                return false
+            }
+        }
+    }
+}
+
 struct RichTextEditor: NSViewRepresentable {
     @ObservedObject var store: NotesStore
 
@@ -2344,11 +2435,10 @@ struct ContentView: View {
                             .foregroundStyle(inkFaint)
                             .allowsHitTesting(false)
                     }
-                    TextField("", text: $nameDraft)
-                        .textFieldStyle(.plain)
-                        .font(.custom("Courier", size: 12))
-                        .foregroundStyle(inkStrong)
-                        .onSubmit { store.setDisplayName(nameDraft) }
+                    HouseField(
+                        text: $nameDraft, size: 12,
+                        onSubmit: { store.setDisplayName(nameDraft) })
+                        .frame(height: 16)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)

@@ -103,7 +103,7 @@ struct OnboardingView: View {
     @State private var sceneOpacity: Double = 0
     @State private var name = ""
     @State private var chosenVault: URL?
-    @FocusState private var nameFocused: Bool
+    @State private var nameFocused = false
 
     var body: some View {
         GeometryReader { geo in
@@ -260,13 +260,15 @@ struct OnboardingView: View {
                     .foregroundStyle(inkFaint)
                     .allowsHitTesting(false)
             }
-            TextField("", text: $name)
-                .textFieldStyle(.plain)
-                .font(.custom("Courier", size: type(T.control, s)))
-                .foregroundStyle(brownInk)
-                .multilineTextAlignment(.center)
-                .focused($nameFocused)
-                .onSubmit { if canAdvance { advance() } }
+            // HouseField rather than SwiftUI's TextField so selections use the
+            // editor's pale cream instead of the tint's near-black ink
+            HouseField(
+                text: $name,
+                size: type(T.control, s),
+                centered: true,
+                focused: nameFocused,
+                onSubmit: { if canAdvance { advance() } })
+                .frame(height: type(T.control, s) + 4)
         }
         .padding(.horizontal, type(T.controlPadH, s))
         .frame(width: D.contentW * s, height: type(T.controlH, s))
