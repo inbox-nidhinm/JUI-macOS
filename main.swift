@@ -73,27 +73,38 @@ enum Style {
     // height, a paragraph break is two pitches, and a bullet or a line break is
     // one — which is the relationship measured off the Figma frames, where the
     // pitch is 33pt and a paragraph break comes in at 1.96 times it.
-    static let lineSpacing: CGFloat = 27
-
-    // One spacing for the whole page, printed whether or not anything is
-    // written on it — a ruled sheet, not a guide drawn around the text.
+    // Three times the type size — the rule the Figma system is built on. There
+    // the type is 22 on a 66pt line with the ruling drawn at exactly 66; the
+    // app's type is 16, and 16 × 3 = 48. (The whole system scales by 16/22:
+    // its 279 margins come out at 203, which is the 200 this app already had.)
     //
-    // Setting that pitch to the *text's own* line height is what keeps type
-    // sitting on the ruling instead of drifting across it, and it means the
-    // leading stays exactly as it was: this is the existing metric, read back
-    // rather than a new one imposed.
-    static var linePitch: CGFloat {
-        NSLayoutManager().defaultLineHeight(for: baseFont) + lineSpacing
+    // Held as the *pitch* rather than as a leading, and the leading derived
+    // from it, so the grid survives the font picker in settings. A family with
+    // a different natural line height gets different leading and still lands on
+    // the same rules; the other way round, every family would rule its own page.
+    static let linePitch: CGFloat = 48
+
+    static var lineSpacing: CGFloat {
+        max(0, linePitch - NSLayoutManager().defaultLineHeight(for: baseFont))
     }
 
-    // Measured off the Figma frames: the ruling darkens whatever paper it
-    // crosses by a uniform 4.7%, and by the same 4.7% on all three channels
-    // (243/228/204 → 232/217/194). So it is a *tonal* operation, not a colour —
-    // which is why it is a neutral grey multiplied rather than a token. One
-    // value is then correct in all six themes, and it stays correct over the
-    // paper texture's creases, where a flat colour would go lighter than the
-    // paper it sits on and read as a highlight instead of a rule.
-    static let ruleTone = NSColor(white: 0.953, alpha: 1)
+    // The ruling runs wider than the text on both sides — 36 units in the
+    // system, which is 26 here. The text column sits inside its ruling rather
+    // than being bounded by it, which is what stops the rules reading as a
+    // table.
+    static let ruleOverhang: CGFloat = 26
+
+    // Black at 10%, which is what the system specifies — and black at 10% over
+    // a colour is the same arithmetic as multiplying it by 0.9, so it is drawn
+    // as a multiply. That keeps it a *tone* rather than a colour: one value
+    // that is right in all six themes, and that stays right over the paper's
+    // creases, where a flat colour would go lighter than the paper it sits on
+    // and read as a highlight instead of a rule.
+    //
+    // Measured off the exported frames this looked like 4.7%, which is what it
+    // was set to before. That was the export halving it — a 1px line at 2x is
+    // antialiased across two device pixels — not the value the design asks for.
+    static let ruleTone = NSColor(white: 0.9, alpha: 1)
 
     static var paragraph: NSParagraphStyle {
         let p = NSMutableParagraphStyle()
@@ -1571,8 +1582,8 @@ final class PlainTextView: NSTextView {
         // text layout untouched: no baseline moves, so selection, the caret and
         // sticky anchors all stay exactly where the layout manager put them.
         let anchor = first.maxY - Style.lineSpacing / 2 + origin.y
-        let left = origin.x + tc.lineFragmentPadding
-        let right = origin.x + tc.size.width - tc.lineFragmentPadding
+        let left = origin.x + tc.lineFragmentPadding - Style.ruleOverhang
+        let right = origin.x + tc.size.width - tc.lineFragmentPadding + Style.ruleOverhang
         guard right > left else { return }
 
         // Start at the first rule at or above the dirty rect rather than at the

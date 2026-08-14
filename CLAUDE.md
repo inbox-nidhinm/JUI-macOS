@@ -241,6 +241,47 @@ What each one buys:
 `.gitignore` matches build products as `*.app/` and `*.zip` rather than by name,
 so neither branch's bundle can be committed by the other's build.
 
+### The ruled grid, and the Figma system it comes from
+
+The source of truth is the **Design System** page of the JUI — Colour Palette
+file (`2XErpBfGuIGNU0DkL58Ute`, node `31:3555`). Read it with the Figma MCP
+rather than measuring exports: a 1px rule at 2× exports antialiased across two
+device pixels, which made the ruling look like 4.7% black when the system says
+10%, and that wrong number shipped once already.
+
+**The whole system scales by 16/22.** Its type is Courier Prime 22 on a 66pt
+line; the app's is 16. Everything else follows and cross-checks:
+
+| | Figma | × 16/22 | app |
+|---|---|---|---|
+| type | 22 | 16 | `Style.baseFont` |
+| line / ruling pitch | 66 (= 3 × type) | 48 | `Style.linePitch` |
+| side margin | 279 | 203 | `sideMargin` 200 — already matched |
+| rule overhang past text | 36 | 26 | `Style.ruleOverhang` |
+| paragraph gap | 64 (≈ 1 pitch) | — | `paragraphSpacing = linePitch` |
+| rule | black 10% | — | `Style.ruleTone`, multiplied |
+
+That the margins independently came out at 203 against the 200 already in the
+app is the check that the 16/22 factor is real rather than fitted.
+
+**Pitch is the constant and leading is derived from it** — not the other way
+round. Settings lets the reader change font family, and a fixed leading would
+give every family its own pitch and its own ruling. Fixing the pitch means a
+family with a different natural line height gets different leading and still
+lands on the same rules.
+
+**Type is centred in its band, and the ruling moves rather than the text.**
+AppKit puts leading below the glyphs, so a fragment is `[glyphs][leading]` and
+its bottom edge is a whole leading from the words; ruling on that edge leaves
+every line hugging the rule above it, worse the more leading there is. The band
+is `linePitch` and the glyphs are the font's line height, so centring is half a
+leading of shift — applied to the ruling, so no baseline moves and selection,
+the caret and sticky anchors all stay where the layout manager put them.
+
+**Any gap that isn't a whole number of pitches walks the type off the grid.**
+That is why `paragraphSpacing` is exactly one pitch (a break skips one rule) and
+the bullet gap is exactly zero (list items take consecutive rules).
+
 ### The icon here is fixed, and that switches a whole mechanism off
 
 `AppIconRe.icns` is the cream flourish (`#F2E3C9`) on pure black — full-bleed
