@@ -1064,10 +1064,15 @@ final class StickyView: NSView, NSTextViewDelegate {
             let w = bounds.width * 0.4034
             let h = w * (flourish.size.height / flourish.size.width)
             let top = bounds.height * 0.6318
+            // Multiplied, not painted on. The artwork is #ECDBBE — the panel
+            // token — but the system draws it *through* whatever it sits on, so
+            // on gold it comes out a deep tan rather than a pale cream. Painted
+            // opaque it was far too light, and the SVG's fill attribute gives
+            // no hint of this: a blend mode doesn't survive that export.
             flourish.draw(
                 in: NSRect(x: bounds.width * 0.6281, y: bounds.height - top - h,
                            width: w, height: h),
-                from: .zero, operation: .sourceOver, fraction: 1)
+                from: .zero, operation: .multiply, fraction: 1)
         }
         NSGraphicsContext.restoreGraphicsState()
     }
@@ -2564,7 +2569,12 @@ struct ContentView: View {
 
                 notesPanel
                     .padding(.trailing, 14)
-                    .padding(.bottom, 48)
+                    // Clears the controls and then some: they sit 10 from the
+                    // bottom and are 44 tall, and the system leaves 26 units —
+                    // 19 here — between the folder grid and them. This was 48,
+                    // which cleared the old 30pt buttons and stopped clearing
+                    // them the moment they were resized from the system.
+                    .padding(.bottom, 10 + 44 + 19)
                     .transition(.opacity)
             }
 
@@ -3007,9 +3017,15 @@ struct ContentView: View {
                                            height: w * (art.size.height / art.size.width))
                                     .offset(x: geo.size.width * 0.4130,
                                             y: geo.size.height * 0.0036)
+                                    // drawn *through* the tile rather than onto
+                                    // it — see the note on the sticky's flourish
+                                    .blendMode(.multiply)
                             }
                         }
                     }
+                    // scopes that multiply to the tile, so it darkens the card
+                    // it belongs to and not the panel behind it
+                    .compositingGroup()
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             )
             .contentShape(Rectangle())
