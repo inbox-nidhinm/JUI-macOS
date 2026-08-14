@@ -43,12 +43,19 @@ enum Paper: String {
 
     var fit: Fit {
         switch self {
-        case .sheet: return .cover
-        // 0.5 puts one image pixel on one Retina pixel — the sharpest the file
-        // can be drawn. These two ship as native-resolution crops rather than
-        // downsamples (see build.sh), so that is also twice the grain size the
-        // page gets from the same stock.
-        case .sticky, .ui: return .window(0.5)
+        // Both cover. The page is big enough to hold a whole sheet, and the
+        // panels *want* the whole sheet shrunk into them: a crop carries the
+        // photograph's large-scale mottling at full size, and a 260pt panel is
+        // small enough that one streak crosses the whole thing. Covering
+        // averages that away and leaves even tooth. Measured against the
+        // system's panel, this is a grain spread of 0.086 where the crop gave
+        // 0.122 — the system's own is 0.085.
+        case .sheet, .ui: return .cover
+        // The sticky is the exception, and the reason the mechanism exists. At
+        // ~170pt across, covering shrinks the grain twelvefold into flat
+        // colour; 0.5 puts one image pixel on one Retina pixel, which is both
+        // the sharpest the file draws and the grain size the system shows.
+        case .sticky: return .window(0.5)
         }
     }
 
