@@ -73,7 +73,7 @@ enum Style {
     // height, a paragraph break is two pitches, and a bullet or a line break is
     // one — which is the relationship measured off the Figma frames, where the
     // pitch is 33pt and a paragraph break comes in at 1.96 times it.
-    static let lineSpacing: CGFloat = 14
+    static let lineSpacing: CGFloat = 27
 
     // One spacing for the whole page, printed whether or not anything is
     // written on it — a ruled sheet, not a guide drawn around the text.
@@ -1558,7 +1558,19 @@ final class PlainTextView: NSTextView {
             ? lm.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil)
             : lm.extraLineFragmentRect
         let origin = textContainerOrigin
-        let anchor = first.maxY + origin.y
+        // Centre the type in its band rather than hanging it from the top.
+        //
+        // AppKit puts leading *below* the glyphs, so a line fragment is
+        // [glyphs][leading] and its bottom edge is a whole leading away from
+        // the words. Ruling on that edge left every line hugging the rule above
+        // it with all the air below — and the more leading, the worse it read.
+        //
+        // The band is (line height + leading) and the glyphs are (line height),
+        // so centring wants half a leading of air on each side. Shifting the
+        // *ruling* up by that, rather than pushing the text down, keeps the
+        // text layout untouched: no baseline moves, so selection, the caret and
+        // sticky anchors all stay exactly where the layout manager put them.
+        let anchor = first.maxY - Style.lineSpacing / 2 + origin.y
         let left = origin.x + tc.lineFragmentPadding
         let right = origin.x + tc.size.width - tc.lineFragmentPadding
         guard right > left else { return }
