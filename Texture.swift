@@ -39,6 +39,37 @@ enum Paper: String {
         }
     }
 
+    // How much of the photograph a surface sees.
+    //
+    // This, not opacity, is what decides whether paper reads as paper. A sticky
+    // is about 170pt across; aspect-filling a 2048px photograph into it shrinks
+    // the grain by a factor of twelve, and twelve-times-too-small grain is a
+    // flat colour no matter what opacity it is drawn at. The sticky looked
+    // untextured for exactly that reason, and no opacity would have fixed it.
+    //
+    // So the small surfaces show a *window* onto the paper at its own scale
+    // rather than the whole sheet crushed into a card. Only the page, which is
+    // big enough to hold a whole sheet, covers.
+    enum Fit {
+        /// The whole photograph across the surface. One sheet reads as one
+        /// sheet, and its creases land in fixed places.
+        case cover
+        /// Drawn at a fixed multiple of the photograph's own size and cropped
+        /// to the surface. Lower numbers mean bigger grain.
+        case window(CGFloat)
+    }
+
+    var fit: Fit {
+        switch self {
+        case .sheet: return .cover
+        // 0.5 puts one image pixel on one Retina pixel — the sharpest the file
+        // can be drawn. These two ship as native-resolution crops rather than
+        // downsamples (see build.sh), so that is also twice the grain size the
+        // page gets from the same stock.
+        case .sticky, .ui: return .window(0.5)
+        }
+    }
+
     // Bundled as greyscale JPEG, built from the full-resolution sources in
     // Art/Textures by build.sh. JPEG rather than PNG because the error it adds
     // is far below the error the downsample already costs — measured at 0.88
@@ -58,9 +89,22 @@ enum Paper: String {
     // Aspect-fill, for the views AppKit draws by hand. Filling rather than
     // stretching keeps the grain proportional when a surface is a different
     // shape from the photograph, which every one of them is.
+    // Shared by both halves so an AppKit surface and a SwiftUI one can never
+    // drift into showing the same stock at two different grains.
+    func scale(covering surface: CGSize, image: CGSize) -> CGFloat {
+        let cover = max(surface.width / image.width, surface.height / image.height)
+        switch fit {
+        case .cover: return cover
+        // Never smaller than cover, or the crop wouldn't reach the edges — a
+        // panel wider than the window still gets filled, it just isn't shrunk
+        // to fit inside it.
+        case .window(let k): return max(k, cover)
+        }
+    }
+
     func draw(in rect: NSRect) {
         guard let image = image, rect.width > 0, rect.height > 0 else { return }
-        let scale = max(rect.width / image.size.width, rect.height / image.size.height)
+        let scale = scale(covering: rect.size, image: image.size)
         let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
         image.draw(in: NSRect(x: rect.midX - size.width / 2,
                               y: rect.midY - size.height / 2,
@@ -89,9 +133,14 @@ private struct PaperOverlay: View {
     var body: some View {
         GeometryReader { geo in
             if let image = paper.image {
+                let scale = paper.scale(covering: geo.size, image: image.size)
                 Image(nsImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    // sized explicitly rather than by aspectRatio(.fill), so a
+                    // small card can show a crop of the paper at full size
+                    // instead of the whole sheet shrunk into it
+                    .frame(width: image.size.width * scale,
+                           height: image.size.height * scale)
                     .frame(width: geo.size.width, height: geo.size.height)
                     .clipped()
                     .blendMode(.multiply)

@@ -68,7 +68,12 @@ enum Style {
     }
     // MARK: Ruled paper
 
-    static let lineSpacing: CGFloat = 4
+    // The one number that sets how open the page feels. Everything else on the
+    // ruled grid is derived from it: the pitch is this plus the font's own line
+    // height, a paragraph break is two pitches, and a bullet or a line break is
+    // one — which is the relationship measured off the Figma frames, where the
+    // pitch is 33pt and a paragraph break comes in at 1.96 times it.
+    static let lineSpacing: CGFloat = 14
 
     // One spacing for the whole page, printed whether or not anything is
     // written on it — a ruled sheet, not a guide drawn around the text.
@@ -630,12 +635,33 @@ final class NotesStore: ObservableObject {
     private func loadAttr(_ id: String, in folder: String?) -> NSAttributedString {
         if let data = try? Data(contentsOf: rtfURL(id, in: folder)),
            let parsed = NSAttributedString(rtf: data, documentAttributes: nil) {
-            // re-apply the current paragraph style so notes saved before a
-            // spacing change pick up the new layout
+            // Rebuild the paragraph styles rather than trusting the file.
+            // Notes saved before a spacing change carry the old metrics, and on
+            // a ruled page that is not a small difference: any gap that isn't a
+            // whole number of pitches walks the type off the ruling, a little
+            // further with every paragraph.
+            //
+            // Per line, not in one sweep. Applying Style.paragraph to the whole
+            // document — which is what this did — flattened every bullet into
+            // prose, so lists came back from disk sitting a full blank rule
+            // apart instead of on consecutive ones.
+            //
+            // Classified by the line's own text, because that is what is
+            // actually true about it. Reading it off headIndent, the way
+            // normalizeFonts does at runtime, would mean deciding from the very
+            // attribute being rebuilt.
             let restyled = NSMutableAttributedString(attributedString: parsed)
-            restyled.addAttribute(
-                .paragraphStyle, value: Style.paragraph,
-                range: NSRange(location: 0, length: restyled.length))
+            let lines = restyled.string as NSString
+            var cursor = 0
+            while cursor < lines.length {
+                let lineRange = lines.lineRange(for: NSRange(location: cursor, length: 0))
+                let isBullet = lines.substring(with: lineRange).hasPrefix(Style.bulletPrefix)
+                restyled.addAttribute(
+                    .paragraphStyle,
+                    value: isBullet ? Style.bulletParagraph : Style.paragraph,
+                    range: lineRange)
+                cursor = NSMaxRange(lineRange)
+            }
             restyled.addAttribute(
                 .foregroundColor, value: Style.ink,
                 range: NSRange(location: 0, length: restyled.length))
@@ -1835,11 +1861,16 @@ struct RichTextEditor: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
-        // The paper is drawn pinned to the viewport, so the scrolled-region
-        // blit AppKit does by default would smear it down the page instead of
-        // repainting it in place. Costs a full background redraw per scroll
-        // tick, which is one cached image draw and a few dozen hairlines.
-        scroll.contentView.copiesOnScroll = false
+        // The paper is pinned to the viewport, so scrolling has to repaint the
+        // whole visible background rather than shifting what is already there.
+        // `copiesOnScroll` was the switch for this and has done nothing since
+        // macOS 11 — AppKit now always minimises the invalidated area, and the
+        // documented way to opt out is to invalidate by hand. Without this the
+        // grain smears down the page as you scroll.
+        //
+        // Costs one cached image draw and a few dozen hairlines per scroll
+        // tick, against a text view that is already relaying out.
+        scroll.contentView.postsBoundsChangedNotifications = true
 
         // manual TextKit 1 stack so the custom layout manager controls
         // selection background drawing
@@ -1877,6 +1908,16 @@ struct RichTextEditor: NSViewRepresentable {
         tv.configureAnnotations()
         context.coordinator.loadedVersion = store.docVersion
         scroll.documentView = tv
+
+        // see postsBoundsChangedNotifications above — repaint the viewport-
+        // pinned paper on every scroll, since AppKit will not
+        context.coordinator.scrollObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: scroll.contentView, queue: .main
+        ) { [weak tv] _ in
+            guard let tv = tv else { return }
+            tv.setNeedsDisplay(tv.visibleRect)
+        }
 
         DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }
         return scroll
@@ -1929,6 +1970,12 @@ struct RichTextEditor: NSViewRepresentable {
         let store: NotesStore
         var loadedVersion = -1
         var wasHidden = false
+        // held so it outlives makeNSView and dies with the editor
+        var scrollObserver: NSObjectProtocol?
+
+        deinit {
+            if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+        }
         var wasSearch = false
         var themeID = Style.theme.id
         private var normalizing = false
@@ -2165,10 +2212,29 @@ struct SearchPalette: View {
         return out
     }
 
+    // Two cards, not one divided card — as in the frames.
+    //
+    // It reads better than a rule across a single card because the two halves
+    // are different kinds of thing: the field is what you act on, the results
+    // are what happens *because* of it. Separating them also means the results
+    // card can grow and shrink as you type without the field appearing to
+    // resize along with it.
     var body: some View {
         let results = hits
         let cmds = commands
-        VStack(spacing: 0) {
+        VStack(spacing: 10) {
+            queryCard(results, cmds)
+            resultsCard(results, cmds)
+        }
+        .frame(width: 460)
+        .arrowCursorZone()
+        .onAppear { focused = true }
+        .onExitCommand { store.searchShown = false }
+        .onChange(of: query) { _ in selected = 0 }
+    }
+
+    private func queryCard(_ results: [SearchHit], _ cmds: [Command]) -> some View {
+        Group {
             ZStack(alignment: .leading) {
                 // macOS ignores prompt styling, so the placeholder is drawn manually
                 if query.isEmpty {
@@ -2196,11 +2262,17 @@ struct SearchPalette: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 13)
+        }
+        // Papered on the background rather than over the whole view: an overlay
+        // would multiply the rows and their highlights too, printing ink that
+        // is meant to sit *on* the card into it instead.
+        .background(panelColor.papered(.ui))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
 
-            Rectangle()
-                .fill(dividerColor)
-                .frame(height: 1)
-
+    @ViewBuilder
+    private func resultsCard(_ results: [SearchHit], _ cmds: [Command]) -> some View {
+        VStack(spacing: 0) {
             if results.isEmpty {
                 Text("no matches")
                     .font(.custom("Courier", size: 12))
@@ -2275,16 +2347,8 @@ struct SearchPalette: View {
                 .padding(.vertical, 8)
             }
         }
-        .frame(width: 460)
-        // Papered on the background rather than over the whole view: an overlay
-        // would multiply the rows and their highlights too, darkening ink that
-        // is meant to sit *on* the card rather than be printed into it.
         .background(panelColor.papered(.ui))
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .arrowCursorZone()
-        .onAppear { focused = true }
-        .onExitCommand { store.searchShown = false }
-        .onChange(of: query) { _ in selected = 0 }
     }
 
     private var showStickyToggle: Bool {
