@@ -991,6 +991,13 @@ final class StickyView: NSView, NSTextViewDelegate {
         NSBezierPath(rect: bounds).setClip() // keep the outer half-circles from painting
         stickyNSColor.setFill()
         path.fill()
+        // Paper, clipped to the stamp's own perforated outline — so the grain
+        // stops exactly where the paper does, including inside every punch,
+        // rather than squaring off at the bounds behind them.
+        NSGraphicsContext.saveGraphicsState()
+        path.addClip()
+        Paper.sticky.draw(in: bounds)
+        NSGraphicsContext.restoreGraphicsState()
         // the little flower, bottom-left corner
         Self.flower(for: Style.theme)?.draw(
             in: NSRect(x: 10, y: 10, width: 20, height: 22),
@@ -2269,7 +2276,10 @@ struct SearchPalette: View {
             }
         }
         .frame(width: 460)
-        .background(panelColor)
+        // Papered on the background rather than over the whole view: an overlay
+        // would multiply the rows and their highlights too, darkening ink that
+        // is meant to sit *on* the card rather than be printed into it.
+        .background(panelColor.papered(.ui))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .arrowCursorZone()
         .onAppear { focused = true }
@@ -2395,7 +2405,12 @@ struct ContentView: View {
 
             RichTextEditor(store: store)
                 .ignoresSafeArea()
-                .blur(radius: store.searchShown || store.onboardingShown ? 3 : 0)
+                // 3 was enough to say "not this, the palette" and no more. The
+                // rebuild's frames push the page properly out of focus, so the
+                // card reads as sitting above the sheet rather than on it —
+                // and the paper goes with it, since the page is painted inside
+                // the text view now and blurs as one surface.
+                .blur(radius: store.searchShown || store.onboardingShown ? 8 : 0)
                 .animation(.easeOut(duration: 0.15), value: store.searchShown)
                 .animation(.easeOut(duration: 0.25), value: store.onboardingShown)
 
@@ -2709,7 +2724,7 @@ struct ContentView: View {
         }
         .frame(width: 260)
         .frame(height: panelHeight)
-        .background(panelColor)
+        .background(panelColor.papered(.ui))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .arrowCursorZone()
         .contextMenu {
