@@ -2411,10 +2411,6 @@ struct SearchPalette: View {
         // is meant to sit *on* the card into it instead.
         .background(panelColor.papered(.palette))
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        // The cards are close in tone to the page they cover, so the blur alone
-        // was not enough to separate them. A shadow is what actually says
-        // "above" — and it is the honest reading of a card lifted off paper.
-        .shadow(color: .black.opacity(0.18), radius: 18, y: 6)
     }
 
     @ViewBuilder
@@ -2496,10 +2492,6 @@ struct SearchPalette: View {
         }
         .background(panelColor.papered(.palette))
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        // The cards are close in tone to the page they cover, so the blur alone
-        // was not enough to separate them. A shadow is what actually says
-        // "above" — and it is the honest reading of a card lifted off paper.
-        .shadow(color: .black.opacity(0.18), radius: 18, y: 6)
     }
 
     private var showStickyToggle: Bool {
