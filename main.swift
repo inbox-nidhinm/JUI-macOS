@@ -2618,7 +2618,17 @@ struct ContentView: View {
                 // and the paper goes with it, since the page is painted inside
                 // the text view now and blurs as one surface.
                 .blur(radius: store.searchShown || store.onboardingShown ? 8 : 0)
-                .animation(.easeOut(duration: 0.15), value: store.searchShown)
+                // A full second, eased both ways. At 0.15 the page snapped out
+                // of focus and back, which read as a glitch rather than as a
+                // shift of attention — the palette is a change of mode, and the
+                // page should recede into it and return from it.
+                //
+                // This modifier sits directly on the blurred editor and the
+                // blur is the only thing here that changes with searchShown, so
+                // the long curve stays on the blur alone. The palette's own
+                // fade is driven separately and is not slowed to match: you
+                // should be able to type the moment you hit ⌘K.
+                .animation(.easeInOut(duration: 1), value: store.searchShown)
                 .animation(.easeOut(duration: 0.25), value: store.onboardingShown)
 
             // the hidden page: dedication + the app's settings
