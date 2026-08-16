@@ -2618,7 +2618,9 @@ struct ContentView: View {
                 // and the paper goes with it, since the page is painted inside
                 // the text view now and blurs as one surface.
                 .blur(radius: store.searchShown || store.onboardingShown ? 8 : 0)
-                // A full second, eased both ways. At 0.15 the page snapped out
+                // Eased both ways over the same 0.6 the palette travels in, so
+                // the page softening and the card arriving are one movement.
+                // At 0.15 the page snapped out
                 // of focus and back, which read as a glitch rather than as a
                 // shift of attention — the palette is a change of mode, and the
                 // page should recede into it and return from it.
@@ -2628,7 +2630,7 @@ struct ContentView: View {
                 // the long curve stays on the blur alone. The palette's own
                 // fade is driven separately and is not slowed to match: you
                 // should be able to type the moment you hit ⌘K.
-                .animation(.easeInOut(duration: 1), value: store.searchShown)
+                .animation(.easeInOut(duration: 0.6), value: store.searchShown)
                 .animation(.easeOut(duration: 0.25), value: store.onboardingShown)
 
             // the hidden page: dedication + the app's settings
@@ -2757,9 +2759,12 @@ struct ContentView: View {
         // (The blur was the obvious suspect and is innocent — the shift is the
         // same with it switched off.)
         .overlay {
-            if store.searchShown {
-                ZStack(alignment: .top) {
-                    // scrim dims the note; click anywhere on it to dismiss
+            // The stack is always here and only its contents come and go, so
+            // the two halves can leave by different routes: the scrim fades
+            // where the palette travels.
+            ZStack(alignment: .top) {
+                if store.searchShown {
+                    // scrim dims the note; click anywhere on it to dismiss.
                     // Was 0.8, which washed the page almost flat and took the
                     // blur with it — the palette ended up a light card on a
                     // light nothing. At 0.55 the blurred page still reads as a
@@ -2767,13 +2772,20 @@ struct ContentView: View {
                     sheetColor.opacity(0.55)
                         .contentShape(Rectangle())
                         .onTapGesture { store.searchShown = false }
+                        .transition(.opacity)
 
+                    // Drops in from above the window and withdraws the same
+                    // way. `move(edge: .top)` carries it clear of its own
+                    // frame, and the stack ignores the safe area, so it starts
+                    // and ends off the top of the screen rather than appearing
+                    // to slide out of the title bar.
                     SearchPalette(store: store)
                         .padding(.top, 110)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                .ignoresSafeArea()
-                .transition(.opacity)
             }
+            .ignoresSafeArea()
+            .animation(.easeInOut(duration: 0.6), value: store.searchShown)
         }
         .tint(brownInk)
         .background(WindowConfigurator())
