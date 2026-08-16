@@ -1589,31 +1589,37 @@ final class PlainTextView: NSTextView {
     // densely as the written part, which is the whole difference between paper
     // and a text decoration.
     private func drawRuling(in rect: NSRect) {
-        guard let lm = layoutManager, let tc = textContainer,
+        guard let tc = textContainer,
               let ctx = NSGraphicsContext.current else { return }
         let pitch = Style.linePitch
         guard pitch > 1 else { return }
 
-        // Anchor on the first line's box, so ruling and type share one grid
-        // from the top of the page down. The extra line fragment is what
-        // answers for an empty document, where there is no glyph to ask about.
-        let first = lm.numberOfGlyphs > 0
-            ? lm.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil)
-            : lm.extraLineFragmentRect
         let origin = textContainerOrigin
-        // Centre the type in its band rather than hanging it from the top.
+
+        // The grid is anchored to the top of the text container, and to nothing
+        // else. It must not be measured off a line fragment, which is what it
+        // used to do, for two reasons that both showed up as broken ruling:
         //
-        // AppKit puts leading *below* the glyphs, so a line fragment is
-        // [glyphs][leading] and its bottom edge is a whole leading away from
-        // the words. Ruling on that edge left every line hugging the rule above
-        // it with all the air below — and the more leading, the worse it read.
+        // A fragment's height is not the pitch. AppKit adds paragraphSpacing to
+        // the *last* line of a paragraph, so a one-line paragraph — a title,
+        // most obviously — reports a box a whole extra band tall, and the grid
+        // started 48pt low.
         //
-        // The band is (line height + leading) and the glyphs are (line height),
-        // so centring wants half a leading of air on each side. Shifting the
-        // *ruling* up by that, rather than pushing the text down, keeps the
-        // text layout untouched: no baseline moves, so selection, the caret and
-        // sticky anchors all stay exactly where the layout manager put them.
-        let anchor = first.maxY - Style.lineSpacing / 2 + origin.y
+        // And a fragment moves. Editing changes its height, but typing only
+        // invalidates the lines it touched, so the rest of the page keeps rules
+        // drawn against the previous anchor. That is the double ruling: two
+        // grids at once, most visible out in the overhang past the text column,
+        // which a text edit never invalidates at all.
+        //
+        // Derived from the container, the anchor cannot move, so every partial
+        // repaint agrees with every other one.
+        //
+        // Centring: AppKit puts leading *below* the glyphs, so a band is
+        // [glyphs][leading] and the glyphs sit at its top. The rules want half
+        // a leading of air on each side, which is the ruling moving up rather
+        // than the text moving down — no baseline changes, so selection, the
+        // caret and sticky anchors all stay where the layout manager put them.
+        let anchor = origin.y - Style.lineSpacing / 2
         let left = origin.x + tc.lineFragmentPadding - Style.ruleOverhang
         let right = origin.x + tc.size.width - tc.lineFragmentPadding + Style.ruleOverhang
         guard right > left else { return }
