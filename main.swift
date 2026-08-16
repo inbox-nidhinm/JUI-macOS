@@ -2689,20 +2689,6 @@ struct ContentView: View {
                     .transition(.opacity)
             }
 
-            if store.searchShown {
-                // scrim dims the note; click anywhere on it to dismiss
-                sheetColor.opacity(0.8)
-                    .ignoresSafeArea()
-                    .contentShape(Rectangle())
-                    .onTapGesture { store.searchShown = false }
-                    .transition(.opacity)
-
-                SearchPalette(store: store)
-                    .padding(.top, 110)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .transition(.opacity)
-            }
-
             if !store.hiddenShown, !store.onboardingShown {
                 // 12 between the buttons in the system and 36 before them (a
                 // flex gap either side of a 12 spacer), which is 9 and 26 here.
@@ -2735,6 +2721,32 @@ struct ContentView: View {
         // SwiftUI's own text fields (⌘K, the name and folder-name fields) draw
         // their caret in the system accent, so they were the last thing in the
         // app still going pink. NSTextView carets are handled by SmoothCaret.
+        // ⌘K lives in an overlay, not in the ZStack.
+        //
+        // As siblings, the scrim and the palette took part in the stack's
+        // layout, and the stack aligns .bottomTrailing — so the page shifted
+        // by 10pt the moment the palette appeared and back again when it
+        // closed. Measured: 9.9pt with both, 2.7pt with the scrim taken out,
+        // which is how the two were told apart. An overlay is sized by the
+        // view it covers and cannot move it.
+        //
+        // (The blur was the obvious suspect and is innocent — the shift is the
+        // same with it switched off.)
+        .overlay {
+            if store.searchShown {
+                ZStack(alignment: .top) {
+                    // scrim dims the note; click anywhere on it to dismiss
+                    sheetColor.opacity(0.8)
+                        .contentShape(Rectangle())
+                        .onTapGesture { store.searchShown = false }
+
+                    SearchPalette(store: store)
+                        .padding(.top, 110)
+                }
+                .ignoresSafeArea()
+                .transition(.opacity)
+            }
+        }
         .tint(brownInk)
         .background(WindowConfigurator())
         .frame(minWidth: 640, minHeight: 400)
