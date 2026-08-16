@@ -2411,6 +2411,10 @@ struct SearchPalette: View {
         // is meant to sit *on* the card into it instead.
         .background(panelColor.papered(.palette))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        // The cards are close in tone to the page they cover, so the blur alone
+        // was not enough to separate them. A shadow is what actually says
+        // "above" — and it is the honest reading of a card lifted off paper.
+        .shadow(color: .black.opacity(0.18), radius: 18, y: 6)
     }
 
     @ViewBuilder
@@ -2492,6 +2496,10 @@ struct SearchPalette: View {
         }
         .background(panelColor.papered(.palette))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        // The cards are close in tone to the page they cover, so the blur alone
+        // was not enough to separate them. A shadow is what actually says
+        // "above" — and it is the honest reading of a card lifted off paper.
+        .shadow(color: .black.opacity(0.18), radius: 18, y: 6)
     }
 
     private var showStickyToggle: Bool {
@@ -2623,7 +2631,11 @@ struct ContentView: View {
 
             // the hidden page: dedication + the app's settings
             if store.hiddenShown {
+                // Papered like the page it replaces. It covers the whole
+                // window, so leaving it as flat colour made the settings the
+                // one screen in the app printed on nothing.
                 sheetColor
+                    .papered(.page)
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture {} // swallow clicks so the editor stays untouched
@@ -2652,8 +2664,18 @@ struct ContentView: View {
                 Image(nsImage: flourish)
                     .resizable()
                     .renderingMode(.template)
-                    .foregroundStyle(flourishHovering ? flourishHoverColor : flourishColor)
-                    .frame(width: 72.4, height: 108.4)
+                    // Multiplied, like every other flourish in the app — and
+                    // for the same reason. Painted in `flourish` it was a hair
+                    // off the sheet, which was invisible enough on flat colour
+                    // and became completely invisible once the page took paper.
+                    // Panel drawn *through* the page reads as a soft tan on it,
+                    // and darkens further under the pointer.
+                    .foregroundStyle(flourishHovering ? flourishHoverColor : panelColor)
+                    .blendMode(.multiply)
+                    // 124.6 x 186.1 at 43 in and 53 up, in the system's units —
+                    // which is this at 16/22. It was drawn smaller and tucked
+                    // tighter into the corner than the design has it.
+                    .frame(width: 90.6, height: 135.4)
                     .contentShape(Rectangle())
                     .onHover { flourishHovering = $0 }
                     .arrowCursorZone()
@@ -2663,8 +2685,8 @@ struct ContentView: View {
                             showNotes = false
                         }
                     }
-                    .padding(.leading, 20)
-                    .padding(.bottom, 18)
+                    .padding(.leading, 31)
+                    .padding(.bottom, 38)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     .ignoresSafeArea()
             }
@@ -2736,7 +2758,11 @@ struct ContentView: View {
             if store.searchShown {
                 ZStack(alignment: .top) {
                     // scrim dims the note; click anywhere on it to dismiss
-                    sheetColor.opacity(0.8)
+                    // Was 0.8, which washed the page almost flat and took the
+                    // blur with it — the palette ended up a light card on a
+                    // light nothing. At 0.55 the blurred page still reads as a
+                    // page, so the card has something to sit above.
+                    sheetColor.opacity(0.55)
                         .contentShape(Rectangle())
                         .onTapGesture { store.searchShown = false }
 

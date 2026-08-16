@@ -164,6 +164,7 @@ struct OnboardingView: View {
             envelopeColor
                 .papered(.envelope)
                 .frame(width: D.envW * s, height: D.envH * s)
+                .allowsHitTesting(false)
 
             letter(s)
                 .offset(x: D.letterX * s, y: letterOffset * s)
@@ -175,6 +176,17 @@ struct OnboardingView: View {
                 .papered(.envelope)
                 .frame(width: D.envW * s, height: D.envH * s)
                 .clipShape(EnvelopeFront(notchDepth: D.notch * s))
+                // Load-bearing. `clipShape` clips *drawing* and not hit
+                // testing, so this rectangle went on swallowing clicks across
+                // its whole frame — including the V of the flap, which is
+                // exactly where the letter's controls sit. It left `begin`
+                // reachable only along the sliver above the envelope's top
+                // edge. It used to be a filled Shape, which hit-tests its own
+                // outline; a papered Color does not, because paper needs a
+                // rectangle to fill.
+                //
+                // The envelope is scenery and wants no clicks at all.
+                .allowsHitTesting(false)
 
             if let sprig = onboardingLogo {
                 Image(nsImage: sprig)
