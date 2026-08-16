@@ -2630,7 +2630,7 @@ struct ContentView: View {
                 // the long curve stays on the blur alone. The palette's own
                 // fade is driven separately and is not slowed to match: you
                 // should be able to type the moment you hit ⌘K.
-                .animation(.easeInOut(duration: 0.6), value: store.searchShown)
+                .animation(.timingCurve(0, 0, 0.35, 1, duration: 0.6), value: store.searchShown)
                 .animation(.easeOut(duration: 0.25), value: store.onboardingShown)
 
             // the hidden page: dedication + the app's settings
@@ -2785,7 +2785,7 @@ struct ContentView: View {
                 }
             }
             .ignoresSafeArea()
-            .animation(.easeInOut(duration: 0.6), value: store.searchShown)
+            .animation(.timingCurve(0, 0, 0.35, 1, duration: 0.6), value: store.searchShown)
         }
         .tint(brownInk)
         .background(WindowConfigurator())
