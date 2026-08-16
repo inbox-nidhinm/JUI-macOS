@@ -161,16 +161,20 @@ struct OnboardingView: View {
     private func envelope(_ s: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
             // the envelope's inside, visible once the letter has risen past it
-            Rectangle()
-                .fill(envelopeColor)
+            envelopeColor
+                .papered(.envelope)
                 .frame(width: D.envW * s, height: D.envH * s)
 
             letter(s)
                 .offset(x: D.letterX * s, y: letterOffset * s)
 
-            EnvelopeFront(notchDepth: D.notch * s)
-                .fill(envelopeColor)
+            // Papered then clipped, rather than filled: the paper has to stop
+            // at the flap's V, and a shape's fill takes a colour, not a
+            // texture. Clipping the papered rectangle to the shape gets both.
+            envelopeColor
+                .papered(.envelope)
                 .frame(width: D.envW * s, height: D.envH * s)
+                .clipShape(EnvelopeFront(notchDepth: D.notch * s))
 
             if let sprig = onboardingLogo {
                 Image(nsImage: sprig)
@@ -188,8 +192,8 @@ struct OnboardingView: View {
 
     private func letter(_ s: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
-            Rectangle()
-                .fill(letterColor)
+            letterColor
+                .papered(.letter)
                 .frame(width: D.letterW * s, height: D.letterH * s)
 
             // On the way out the letter goes back in blank, like it's being

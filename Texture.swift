@@ -110,12 +110,15 @@ enum Surface {
     case folderTile  // #F3E4CA folderBase — the tiles themselves
     case palette     // #ECDBBE panel — the ⌘K cards
     case button      // #ECDBBE panel — a raised icon button
+    case envelope    // #EBCEA3 envelope — onboarding
+    case letter      // #FFFAF3 letterSheet — onboarding
 
     var paper: Paper {
         switch self {
         case .page: return .sheet
         case .sticky: return .sticky
-        case .folderPanel, .folderTile, .palette, .button: return .ui
+        case .folderPanel, .folderTile, .palette, .button,
+             .envelope, .letter: return .ui
         }
     }
 
@@ -147,8 +150,19 @@ enum Surface {
         // Sheet is the flatter of the two, which is why building on it turned
         // the card grey-green beside the warm panels.
         case .palette: return 0.30
-        // #CEBFA6 — 0.873, the heaviest surface in the app.
-        case .button: return 0.98
+        // The system draws this at 0.873 — 98%, the heaviest surface in it.
+        // Deliberately lighter here: at full weight the raised button read as a
+        // dark slug in the corner of the page, and it is the one surface that
+        // appears over bare sheet rather than over another panel, so it carries
+        // the contrast on its own.
+        case .button: return 0.75
+        // The envelope carries the strongest paper in the onboarding — it is
+        // the largest flat area on screen and the one thing meant to read as
+        // board rather than as page.
+        case .envelope: return 0.85
+        // The letter is white with the stock at 40% in the system, and stays
+        // light: it is what the title is read off.
+        case .letter: return 0.40
         }
     }
 
@@ -164,7 +178,8 @@ enum Surface {
         // panel puts one streak across the whole thing. Covering averages that
         // away and leaves even tooth — a grain spread of 0.086 against the
         // system's 0.085, where the crop gave 0.122.
-        case .page, .folderPanel, .folderTile, .button: return .cover
+        case .page, .folderPanel, .folderTile, .button,
+             .envelope, .letter: return .cover
         // Covering shrinks the grain twelvefold on a ~170pt stamp and the paper
         // reads as flat colour. 0.5 puts one image pixel on one Retina pixel.
         case .sticky: return .window(0.5)

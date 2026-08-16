@@ -20,6 +20,20 @@ var inkFaint: Color { brownInk.opacity(0.4) } // placeholders, empty states, ico
 
 var dividerColor: Color { Color(nsColor: Style.theme.divider) }
 
+// The hairline *inside* a papered surface, as a tone rather than a colour —
+// the same reasoning as `Style.ruleTone`.
+//
+// `divider` above is a colour chosen to sit a step darker than the sheet, and
+// it stopped working the moment the panels took their paper: at 93% the folder
+// pane goes to #D0C1A7, which is darker than the #E6D4B5 hairline, so the
+// divider inverted and read as a pale scratch across the card.
+//
+// Black at 12% over a base is arithmetically a multiply by 0.88 — no blend mode
+// needed, since a black source at alpha `a` composites to exactly `base × (1−a)`.
+// So this is always a darkening, on any surface, in any of the six themes, and
+// it cannot invert the way a fixed colour can.
+var panelDividerColor: Color { Color.black.opacity(0.12) }
+
 // botanical sprig sitting atop each folder box
 let folderSprigImage: NSImage? = {
     guard let url = Bundle.main.url(forResource: "FolderSprig", withExtension: "png")
@@ -101,6 +115,17 @@ enum Style {
     // than being bounded by it, which is what stops the rules reading as a
     // table.
     static let ruleOverhang: CGFloat = 26
+
+    // The type's own height, without the leading that follows it.
+    static var lineHeight: CGFloat { NSLayoutManager().defaultLineHeight(for: baseFont) }
+
+    // How far a selection reaches past the glyphs it covers. AppKit hands the
+    // whole line fragment to the selection fill, and a fragment is
+    // [glyphs][leading] — so on a ruled page, where the leading is most of the
+    // band, the highlight trailed a slab of colour under every line and ran
+    // down to the next one. The selection marks the words; this is the air
+    // around them.
+    static let selectionPadding: CGFloat = 5
 
     // Black at 10%, which is what the system specifies — and black at 10% over
     // a colour is the same arithmetic as multiplying it by 0.9, so it is drawn
@@ -972,7 +997,31 @@ final class StickyView: NSView, NSTextViewDelegate {
     let stickyID: UUID
     private let noteView = StickyTextView()
     // bottom band reserved for the flower; text never enters it
-    private let bottomReserve: CGFloat = 38
+    // The flourish, as fractions of the stamp's *width*.
+    //
+    // Width and not height, and anchored to the bottom edge rather than placed
+    // at a fraction down the stamp. Placing it proportionally meant a tall
+    // sticky pushed it up into the middle of the note and stretched it; the
+    // flourish is a fixed mark in the corner of the paper, so it scales with
+    // how wide the paper is and stays where it is put. The system has it
+    // hanging 18 units past a 316-unit stamp, which is this 0.058.
+    private static let flourishWidth: CGFloat = 0.4034
+    private static let flourishLeft: CGFloat = 0.6281
+    private static let flourishOverhang: CGFloat = 0.0575
+    private static let flourishAspect: CGFloat = 529.0 / 484.0 // the artwork's own
+
+    private func flourishRect() -> NSRect {
+        let w = bounds.width * Self.flourishWidth
+        let h = w * Self.flourishAspect
+        return NSRect(x: bounds.width * Self.flourishLeft,
+                      y: -(bounds.width * Self.flourishOverhang),
+                      width: w, height: h)
+    }
+
+    // Text never enters the flourish's band. Derived from the flourish rather
+    // than fixed at 38, which the artwork outgrew — the words were running
+    // straight over the flowers on any sticky wide enough.
+    private var bottomReserve: CGFloat { max(flourishRect().maxY + 6, 24) }
     var onTextChange: ((String) -> Void)?
     var onDelete: (() -> Void)?
     var onLayoutNeeded: (() -> Void)?
@@ -1060,20 +1109,13 @@ final class StickyView: NSView, NSTextViewDelegate {
         // Width drives the height through the artwork's own aspect rather than
         // both coming from the stamp, so a sticky that isn't the system's
         // proportions doesn't stretch the flowers.
-        if let flourish = Self.flower(for: Style.theme) {
-            let w = bounds.width * 0.4034
-            let h = w * (flourish.size.height / flourish.size.width)
-            let top = bounds.height * 0.6318
-            // Multiplied, not painted on. The artwork is #ECDBBE — the panel
-            // token — but the system draws it *through* whatever it sits on, so
-            // on gold it comes out a deep tan rather than a pale cream. Painted
-            // opaque it was far too light, and the SVG's fill attribute gives
-            // no hint of this: a blend mode doesn't survive that export.
-            flourish.draw(
-                in: NSRect(x: bounds.width * 0.6281, y: bounds.height - top - h,
-                           width: w, height: h),
-                from: .zero, operation: .multiply, fraction: 1)
-        }
+        // Multiplied, not painted on. The artwork is #ECDBBE — the panel token —
+        // but the system draws it *through* whatever it sits on, so on gold it
+        // comes out a deep tan rather than a pale cream. Painted opaque it was
+        // far too light, and the SVG's fill attribute gives no hint of this: a
+        // blend mode doesn't survive that export.
+        Self.flower(for: Style.theme)?.draw(
+            in: flourishRect(), from: .zero, operation: .multiply, fraction: 1)
         NSGraphicsContext.restoreGraphicsState()
     }
 
@@ -1215,9 +1257,23 @@ final class SelectionColorLayoutManager: NSLayoutManager {
         _ rectArray: UnsafePointer<NSRect>, count rectCount: Int,
         forCharacterRange charRange: NSRange, color: NSColor
     ) {
+        // Filled here rather than handed to super, because the rects AppKit
+        // provides are whole line fragments and a fragment is [glyphs][leading].
+        // With most of a 48pt band being leading, the highlight ran from the
+        // words down to the next line — reading as a block of colour with words
+        // sitting at the top of it rather than as words being marked.
+        //
+        // Trimmed to the glyphs plus a little air. The top edge is the
+        // fragment's own, since that is where the glyphs start.
         Style.selection.setFill()
-        super.fillBackgroundRectArray(
-            rectArray, count: rectCount, forCharacterRange: charRange, color: Style.selection)
+        let height = Style.lineHeight + Style.selectionPadding * 2
+        for i in 0..<rectCount {
+            let fragment = rectArray[i]
+            NSRect(x: fragment.minX,
+                   y: fragment.minY - Style.selectionPadding,
+                   width: fragment.width,
+                   height: min(fragment.height, height)).fill()
+        }
     }
 }
 
@@ -2177,12 +2233,17 @@ struct IconButton: View {
     let systemName: String
     let help: String
     var active = false // keeps the hover background while whatever it toggles is open
-    // The system draws the two buttons at different weights: the past-notes
-    // glyph darker than the new-note plus. Kept on the ink ladder rather than
-    // matched exactly — see the note in CLAUDE.md.
-    var tone: Color = inkFaint
     let action: () -> Void
     @State private var hovering = false
+
+    // Both buttons take the same two tones — they are the same kind of control,
+    // and drawing them at different weights (which the system does, and which
+    // this followed) just read as one of them being broken.
+    //
+    // The glyph goes *darker* as its bed goes darker, so the raised state gains
+    // contrast rather than trading it away: at rest it is a faint mark on bare
+    // sheet, and under the pointer a firm one on a papered tile.
+    private var tone: Color { hovering || active ? inkStrong : inkFaint }
 
     // 60 across with a 14 radius in the system, which is 44 and 10 here — the
     // same 16/22 the rest of it scales by.
@@ -2380,7 +2441,7 @@ struct SearchPalette: View {
             // "onboard again" is properly hidden and needs to be typed for.
             if !cmds.isEmpty {
                 Rectangle()
-                    .fill(dividerColor)
+                    .fill(panelDividerColor)
                     .frame(height: 1)
                 VStack(spacing: 0) {
                     ForEach(Array(cmds.enumerated()), id: \.element.id) { offset, cmd in
@@ -2614,7 +2675,7 @@ struct ContentView: View {
                         .foregroundStyle(inkFaint)
                         .padding(.trailing, 17)
                     IconButton(systemName: "text.justify.left", help: "Past notes",
-                               active: showNotes, tone: inkMuted) {
+                               active: showNotes) {
                         withAnimation(.easeOut(duration: 0.15)) { showNotes.toggle() }
                     }
                     IconButton(systemName: "plus", help: "New note (⌘N)") {
@@ -2821,7 +2882,7 @@ struct ContentView: View {
                     folderGrid
                     if showsFolderDivider {
                         Rectangle()
-                            .fill(dividerColor)
+                            .fill(panelDividerColor)
                             .frame(height: 1)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
