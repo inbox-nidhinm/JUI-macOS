@@ -125,7 +125,23 @@ enum Style {
     // band, the highlight trailed a slab of colour under every line and ran
     // down to the next one. The selection marks the words; this is the air
     // around them.
-    static let selectionPadding: CGFloat = 5
+    static let selectionPadding: CGFloat = 8
+
+    // The selection in the note editor is a *tone*, not a colour — the same
+    // reasoning as `ruleTone` and the panel divider.
+    //
+    // It used to be `panel`, painted opaque, which covered the paper wherever
+    // it fell: a flat swatch on a textured page, and the one place the illusion
+    // broke. Black at 13% composites to `base × 0.87`, so the grain and the
+    // ruling both come through it, darkened in proportion rather than hidden.
+    // No blend mode is needed for that — a black source at alpha `a` *is* a
+    // multiply by (1 − a) — and it works here where it would not in a SwiftUI
+    // overlay, because the page is painted into this same context by
+    // `drawBackground` a moment earlier.
+    static let selectionTone = NSColor(white: 0, alpha: 0.13)
+
+    // How far the caret reaches past the type, top and bottom.
+    static let caretOvershoot: CGFloat = 2
 
     // Black at 10%, which is what the system specifies — and black at 10% over
     // a colour is the same arithmetic as multiplying it by 0.9, so it is drawn
@@ -881,7 +897,14 @@ final class SmoothCaret {
             return
         }
         var rect = view.convert(window.convertFromScreen(screenRect), from: nil)
-        rect.size.width = 2
+        // AppKit's rect for the insertion point is the whole line fragment, and
+        // a fragment is [glyphs][leading]. On a 48pt band that drew a 48pt
+        // caret — most of it hanging below the letters it sits among, reaching
+        // down toward the next line. Trimmed to the type's own height, taken
+        // from the fragment's top, which is where the glyphs are.
+        let height = min(rect.height, Style.lineHeight + Style.caretOvershoot * 2)
+        rect.origin.y -= Style.caretOvershoot
+        rect.size = NSSize(width: 2, height: height)
         layer.isHidden = false
         CATransaction.begin()
         if animated {
@@ -1265,7 +1288,7 @@ final class SelectionColorLayoutManager: NSLayoutManager {
         //
         // Trimmed to the glyphs plus a little air. The top edge is the
         // fragment's own, since that is where the glyphs start.
-        Style.selection.setFill()
+        Style.selectionTone.setFill()
         let height = Style.lineHeight + Style.selectionPadding * 2
         for i in 0..<rectCount {
             let fragment = rectArray[i]
@@ -1479,6 +1502,20 @@ final class PlainTextView: NSTextView {
     ) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         smoothCaret.update(animated: true)
+        // The selection is painted a little outside the rects AppKit hands to
+        // the layout manager — it reaches `selectionPadding` above each line
+        // fragment, so the highlight has air on both sides of the type rather
+        // than only below it.
+        //
+        // AppKit works out what to repaint from those same fragment rects, so
+        // the strip above them is never invalidated, and clearing or shrinking
+        // a selection left its top edge behind as a torn line of stale colour.
+        // Worst on the last line, where nothing below it ever redraws over the
+        // remains.
+        //
+        // Repainting the visible rect costs what a scroll tick already costs:
+        // one cached image draw and a few dozen hairlines.
+        setNeedsDisplay(visibleRect)
     }
 
     override func didChangeText() {
