@@ -1638,7 +1638,6 @@ final class PlainTextView: NSTextView {
             if sel.length == 0, sel.location <= ns.length {
                 let lineRange = ns.lineRange(for: NSRange(location: sel.location, length: 0))
                 let line = ns.substring(with: lineRange).trimmingCharacters(in: .newlines)
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
                 // "---" + Return used to become a horizontal rule. Removed: on a
                 // ruled page the rule had nothing left to do — a page that is
                 // already lined cannot use one more line to mean "a break", and
@@ -1661,6 +1660,36 @@ final class PlainTextView: NSTextView {
                 if line.hasPrefix(Style.bulletPrefix) {
                     super.insertNewline(sender)
                     super.insertText(Style.bulletPrefix, replacementRange: selectedRange())
+                    // Say what the paragraph is rather than hoping it inherited
+                    // it. This used to rely on typingAttributes carrying
+                    // bulletParagraph forward from the line above, and that
+                    // chain is broken by anything that reloads the document —
+                    // switching notes, ⌘K revealing a hit, a theme change that
+                    // bumps docVersion — all of which reset typingAttributes to
+                    // Style.base, whose paragraph style is *prose*.
+                    //
+                    // A bullet wearing the prose style still looks like a
+                    // bullet, but prose carries a whole pitch of paragraphSpacing
+                    // after it, so the list silently grew a blank rule between
+                    // items from that point on. Nothing was inserted; the gap
+                    // was spacing, which is why it could not be deleted.
+                    //
+                    // The line just left is restyled too: if the chain was
+                    // already broken, it is wearing prose as well.
+                    let text = storage.string as NSString
+                    let caret = min(selectedRange().location, text.length)
+                    let current = text.lineRange(for: NSRange(location: caret, length: 0))
+                    storage.addAttribute(
+                        .paragraphStyle, value: Style.bulletParagraph, range: current)
+                    if current.location > 0 {
+                        let previous = text.lineRange(
+                            for: NSRange(location: current.location - 1, length: 0))
+                        storage.addAttribute(
+                            .paragraphStyle, value: Style.bulletParagraph, range: previous)
+                    }
+                    var attrs = typingAttributes
+                    attrs[.paragraphStyle] = Style.bulletParagraph
+                    typingAttributes = attrs
                     return
                 }
             }
