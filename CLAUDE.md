@@ -323,6 +323,24 @@ never carried back to it.
 ./build.sh
 ```
 
+**Run the staged copy, not the one in the repo.** `build.sh` finishes by
+copying the bundle to `~/Library/Application Support/re-JUI-dev/` and prints the
+path.
+
+This repo is inside `~/Documents`, which macOS protects with TCC, so the
+bundle's own resources are files in a protected folder and launching it reads
+them. That would normally be a one-time prompt — macOS exempts an app for its
+own bundle and remembers the answer — but both of those hang on a stable
+code-signing identity, and an ad-hoc signature has none. `codesign --sign -`
+leaves `Signature=adhoc` with `TeamIdentifier=not set`, and this script re-signs
+from scratch every build, so the identity is different each time. The approval
+has nothing durable to attach to, and the prompt returns on *every launch*.
+
+Verified both ways: the same bundle asks every time from the repo and never asks
+from the staging directory. Notarisation would fix it properly; until then, do
+not run the dev build out of `~/Documents`. The zip and the bundle in the repo
+are untouched, so what ships is unaffected.
+
 One command does everything: universal build, macOS 13 floor, per-build
 `CFBundleVersion` stamp, ad-hoc sign, signature verify, and `JUI.zip`. It stops
 rather than shipping a broken bundle. Then to see it:

@@ -145,6 +145,32 @@ ditto -c -k --keepParent --norsrc --noextattr "$APP" "$ZIP"
 echo "Built $APP build $BUILD_NUMBER ($(lipo -archs "$APP/Contents/MacOS/$NAME"), macOS $DEPLOY_TARGET+, signature verified)"
 echo "Packaged $ZIP ($(du -h "$ZIP" | cut -f1)) — on the receiving Mac: xattr -cr $APP"
 
+# --- stage a copy outside ~/Documents ----------------------------------------
+# Run the staged copy, not the one that was just built here.
+#
+# This repo lives inside ~/Documents, which macOS protects with TCC, and the
+# bundle's own resources — every texture and PNG — are therefore files in a
+# protected folder. Launching the app reads them, so macOS asks permission.
+#
+# Normally that is a one-time question: macOS exempts an app for its own bundle
+# and remembers the answer. Both depend on a stable code-signing identity, and
+# an ad-hoc signature has none — `codesign --sign -` leaves Signature=adhoc with
+# TeamIdentifier not set, and this script re-signs from scratch on every build,
+# so the identity differs each time. The approval has nothing durable to attach
+# to, and the prompt comes back on every single launch.
+#
+# Notarised distribution would fix it properly. Until then the cheap fix is to
+# not run it from a protected folder: verified, the same bundle launched from
+# here never asks. The zip and the bundle in the repo are untouched, so what
+# ships is unchanged.
+STAGE="$HOME/Library/Application Support/$NAME-dev"
+rm -rf "$STAGE/$APP"
+mkdir -p "$STAGE"
+ditto --norsrc --noextattr "$APP" "$STAGE/$APP"
+codesign --verify --deep --strict "$STAGE/$APP"
+echo "Staged $STAGE/$APP"
+echo "  run that one: open \"$STAGE/$APP\""
+
 # --- back up to GitHub -------------------------------------------------------
 # Records every build and pushes it, so the source is never only on this Mac.
 #
