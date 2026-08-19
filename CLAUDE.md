@@ -241,6 +241,31 @@ What each one buys:
 `.gitignore` matches build products as `*.app/` and `*.zip` rather than by name,
 so neither branch's bundle can be committed by the other's build.
 
+### The flourish animation, and two traps in rasterising it
+
+The corner flourish draws itself once at launch, from 30 frames split out of one
+animated SVG by `Art/split-frames.py` and rasterised by `Art/render-frames.swift`,
+both run from `build.sh`.
+
+**Render through WebKit, never AppKit.** `NSImage` loads SVG and silently drops
+`<mask>`. The later frames of this animation are drawn by masking a full-bleed
+rect — the mask *is* the shape — so an AppKit render loses every masked element
+and returns a sparse sprig with its blooms missing. Nothing errors, which is the
+trap: it looks like an animation that ends early rather than a renderer that
+failed, and it was diagnosed as exactly that at first.
+
+**Write premultiplied alpha.** `NSBitmapImageRep` stores premultiplied by
+default, so a white silhouette at partial coverage is `(a, a, a, a)` and not
+`(255, 255, 255, a)`. Writing the latter is not valid premultiplied data and
+reads back fully opaque — every frame came out a solid rectangle.
+
+Frames are cropped to the **last** frame's bounds, not their own, or the drawing
+re-centres on every tick and the flourish swims while drawing itself. They ship
+as white silhouettes and are tinted at draw time, so one sequence serves all six
+themes. Playback is a repeating timer stepping an index, not an animation:
+stop-motion is discrete, and interpolating between frames would remove the point
+of it.
+
 ### The ruled grid, and the Figma system it comes from
 
 The source of truth is the **Design System** page of the JUI — Colour Palette

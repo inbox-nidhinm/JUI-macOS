@@ -57,6 +57,13 @@ struct AnimatedFlourish: View {
         _index = State(initialValue: Self.hasPlayed ? Self.frames.count - 1 : 0)
     }
 
+    // Taken from the artwork rather than written down, so a re-export at a
+    // different crop cannot leave the frame stretching it.
+    static var aspect: CGFloat {
+        guard let first = frames.first, first.size.height > 0 else { return 1 }
+        return first.size.width / first.size.height
+    }
+
     static let frames: [NSImage] = (1...30).compactMap { n in
         Bundle.main.url(forResource: String(format: "frame-%02d", n),
                         withExtension: "png", subdirectory: "FlourishFrames")
@@ -2765,10 +2772,9 @@ struct ContentView: View {
                     // Panel drawn *through* the page reads as a soft tan on it,
                     // and darkens further under the pointer.
                     .blendMode(.multiply)
-                    // Height from the system's 186.1 units at 16/22; width from
-                    // the artwork's own aspect, since the animation's flourish
-                    // is a different drawing from the one it replaces.
-                    .frame(width: 135.4 * 265.0 / 405.0, height: 135.4)
+                    // Height from the system's 186.1 units at 16/22; width
+                    // follows the artwork's own aspect.
+                    .frame(width: 135.4 * AnimatedFlourish.aspect, height: 135.4)
                     .contentShape(Rectangle())
                     .onHover { flourishHovering = $0 }
                     .arrowCursorZone()
