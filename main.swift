@@ -34,6 +34,69 @@ var dividerColor: Color { Color(nsColor: Style.theme.divider) }
 // it cannot invert the way a fixed colour can.
 var panelDividerColor: Color { Color.black.opacity(0.12) }
 
+// The corner flourish, drawn on rather than simply appearing.
+//
+// Thirty frames of a stop-motion sequence, played once at 12fps and then held —
+// the last frame *is* the flourish, so nothing swaps in at the end and there is
+// no resting artwork separate from the animation.
+//
+// The frames are white silhouettes on transparency, so they tint like every
+// other piece of art here and one sequence serves all six themes. They are
+// rasterised at build time; see build.sh on why this one is raster.
+struct AnimatedFlourish: View {
+    let tint: Color
+
+    // Only on the first appearance in a session. The view outlives the settings
+    // page opening and closing, but a replay every time it happened to remount
+    // would turn a small piece of delight into a tic.
+    private static var hasPlayed = false
+    @State private var index: Int
+
+    init(tint: Color) {
+        self.tint = tint
+        _index = State(initialValue: Self.hasPlayed ? Self.frames.count - 1 : 0)
+    }
+
+    static let frames: [NSImage] = (1...30).compactMap { n in
+        Bundle.main.url(forResource: String(format: "frame-%02d", n),
+                        withExtension: "png", subdirectory: "FlourishFrames")
+            .flatMap { NSImage(contentsOf: $0) }
+    }
+
+    // 30 frames over 2.5s in the source, which is 12fps.
+    private static let frameDuration = 1.0 / 12.0
+
+    var body: some View {
+        Group {
+            if Self.frames.indices.contains(index) {
+                Image(nsImage: Self.frames[index])
+                    .resizable()
+                    .renderingMode(.template)
+            } else {
+                Color.clear // no frames shipped: draw nothing rather than a box
+            }
+        }
+        .foregroundStyle(tint)
+        .onAppear(perform: play)
+    }
+
+    private func play() {
+        guard !Self.hasPlayed, Self.frames.count > 1 else { return }
+        Self.hasPlayed = true
+        // Stepped by a repeating timer rather than animated: stop-motion is
+        // discrete by definition, and anything that interpolates between frames
+        // would take the character out of it.
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.frameDuration, repeats: true) { t in
+            if index < Self.frames.count - 1 {
+                index += 1
+            } else {
+                t.invalidate()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common) // keeps drawing while scrolling
+    }
+}
+
 // botanical sprig sitting atop each folder box
 let folderSprigImage: NSImage? = {
     guard let url = Bundle.main.url(forResource: "FolderSprig", withExtension: "png")
@@ -2692,23 +2755,20 @@ struct ContentView: View {
             }
 
             // corner flourish: decoration, and the door in and out of the hidden page
-            if let url = Bundle.main.url(forResource: "Flourish", withExtension: "png"),
-               let flourish = NSImage(contentsOf: url) {
-                Image(nsImage: flourish)
-                    .resizable()
-                    .renderingMode(.template)
+            if !AnimatedFlourish.frames.isEmpty {
+                AnimatedFlourish(
+                    tint: flourishHovering ? flourishHoverColor : panelColor)
                     // Multiplied, like every other flourish in the app — and
                     // for the same reason. Painted in `flourish` it was a hair
                     // off the sheet, which was invisible enough on flat colour
                     // and became completely invisible once the page took paper.
                     // Panel drawn *through* the page reads as a soft tan on it,
                     // and darkens further under the pointer.
-                    .foregroundStyle(flourishHovering ? flourishHoverColor : panelColor)
                     .blendMode(.multiply)
-                    // 124.6 x 186.1 at 43 in and 53 up, in the system's units —
-                    // which is this at 16/22. It was drawn smaller and tucked
-                    // tighter into the corner than the design has it.
-                    .frame(width: 90.6, height: 135.4)
+                    // Height from the system's 186.1 units at 16/22; width from
+                    // the artwork's own aspect, since the animation's flourish
+                    // is a different drawing from the one it replaces.
+                    .frame(width: 135.4 * 265.0 / 405.0, height: 135.4)
                     .contentShape(Rectangle())
                     .onHover { flourishHovering = $0 }
                     .arrowCursorZone()

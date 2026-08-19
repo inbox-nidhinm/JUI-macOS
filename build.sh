@@ -114,6 +114,35 @@ if [ -d Art/Textures ] && [ -n "$(ls -A Art/Textures/*.png 2>/dev/null)" ]; then
   echo "Textures: shipped $(ls -1 "$APP/Contents/Resources/Textures" | wc -l | tr -d ' ') ($(du -sh "$APP/Contents/Resources/Textures" | cut -f1))"
 fi
 
+# Flourish animation: 30 frames of a stop-motion draw-on, split out of one
+# animated SVG and rasterised here.
+#
+# The export stacks all 30 frames in a single file and reveals them in turn with
+# CSS @keyframes on opacity. Nothing in AppKit runs that — no SMIL, no CSS
+# animation, no clock — so rendering the file as it stands draws every frame at
+# once. Each frame is lifted into its own document first, then drawn.
+#
+# Raster, unusually for this branch. The artwork is a single tone, so a template
+# image tinted at draw time still follows the theme, which is the property that
+# made vectors worth the trouble elsewhere. What vectors would cost here is
+# reimplementing SVG mask semantics — the later frames are drawn by masking a
+# full-bleed rect, so the mask carries the shape — and letting the renderer
+# resolve that is exact rather than nearly right. 30 frames come to under 300KB.
+#
+# Cached on the source's modification time; splitting and rendering 30 frames is
+# slow enough to notice on every build.
+ANIM="Art/Vectors/FlourishAnimation.svg"
+if [ -f "$ANIM" ]; then
+  if [ ! -f .animcache/frame-30.png ] || [ "$ANIM" -nt .animcache/frame-30.png ]; then
+    rm -rf .animcache && mkdir -p .animcache/svg
+    python3 Art/split-frames.py "$ANIM" .animcache/svg > /dev/null
+    swift Art/render-frames.swift .animcache/svg .animcache 405
+  fi
+  mkdir -p "$APP/Contents/Resources/FlourishFrames"
+  cp .animcache/frame-*.png "$APP/Contents/Resources/FlourishFrames/"
+  echo "Flourish: shipped $(ls -1 .animcache/frame-*.png | wc -l | tr -d ' ') frames ($(du -sh "$APP/Contents/Resources/FlourishFrames" | cut -f1))"
+fi
+
 for arch in arm64 x86_64; do
   swiftc -O -parse-as-library -swift-version 5 \
     -target "$arch-apple-macos$DEPLOY_TARGET" \
