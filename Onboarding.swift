@@ -45,6 +45,7 @@ private enum D {
 
     static let sprigW: CGFloat = 105.877
     static let sprigH: CGFloat = 158.092
+    static let sprigGrowth: CGFloat = 1.25 // the drawn flourish wants more room than the old mark
     static let sprigCX: CGFloat = 458
     static let sprigCY: CGFloat = 427
 
@@ -193,9 +194,9 @@ struct OnboardingView: View {
             // already finished. Its own key, so this and the corner each get a
             // turn instead of the first one to appear using up both.
             if !AnimatedFlourish.frames.isEmpty {
-                AnimatedFlourish(tint: flourishColor, key: "onboarding")
-                    .frame(width: D.sprigH * AnimatedFlourish.aspect * s,
-                           height: D.sprigH * s)
+                AnimatedFlourish(tint: flourishColor, key: "onboarding", replays: true)
+                    .frame(width: D.sprigH * D.sprigGrowth * AnimatedFlourish.aspect * s,
+                           height: D.sprigH * D.sprigGrowth * s)
                     .offset(
                         x: (D.sprigCX - D.sprigW / 2) * s,
                         y: (D.sprigCY - D.sprigH / 2) * s)
@@ -400,7 +401,12 @@ struct OnboardingView: View {
             presented = true
             sceneOpacity = 1
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+        // The letter waits for the flourish to finish drawing, so the two read
+        // one after the other rather than competing for the same moment. Timed
+        // off the sequence's own length, so a re-export of a different number
+        // of frames keeps this in step without anyone remembering to adjust it.
+        let afterFlourish = AnimatedFlourish.duration + 0.25
+        DispatchQueue.main.asyncAfter(deadline: .now() + afterFlourish) {
             withAnimation(.easeInOut(duration: 0.75)) { letterRaised = true }
         }
     }

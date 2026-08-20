@@ -64,13 +64,20 @@ struct AnimatedFlourish: View {
     // the settings page opening and closing, and replaying every time it
     // happened to remount would turn a small piece of delight into a tic.
     let key: String
+    // Onboarding sets this: its flourish draws itself every time the envelope
+    // is opened, not once per launch. The page corner does the opposite —
+    // replaying it on every remount would turn a small piece of delight into a
+    // tic — which is why the behaviour is per caller rather than global.
+    let replays: Bool
     private static var played: Set<String> = []
     @State private var index: Int
 
-    init(tint: Color, key: String) {
+    init(tint: Color, key: String, replays: Bool = false) {
         self.tint = tint
         self.key = key
-        _index = State(initialValue: Self.played.contains(key) ? Self.frames.count - 1 : 0)
+        self.replays = replays
+        _index = State(initialValue: !replays && Self.played.contains(key)
+                       ? Self.frames.count - 1 : 0)
     }
 
     // Taken from the artwork rather than written down, so a re-export at a
@@ -89,6 +96,11 @@ struct AnimatedFlourish: View {
     // 30 frames over 2.5s in the source, which is 12fps.
     private static let frameDuration = 1.0 / 12.0
 
+    /// How long the whole sequence takes, for callers that need to wait it out.
+    /// Derived from the frames actually shipped, so a re-export of a different
+    /// length keeps whatever is sequenced behind it in step.
+    static var duration: TimeInterval { Double(frames.count) * frameDuration }
+
     var body: some View {
         Group {
             if Self.frames.indices.contains(index) {
@@ -104,8 +116,9 @@ struct AnimatedFlourish: View {
     }
 
     private func play() {
-        guard !Self.played.contains(key), Self.frames.count > 1 else { return }
+        guard replays || !Self.played.contains(key), Self.frames.count > 1 else { return }
         Self.played.insert(key)
+        index = 0
         // Stepped by a repeating timer rather than animated: stop-motion is
         // discrete by definition, and anything that interpolates between frames
         // would take the character out of it.
