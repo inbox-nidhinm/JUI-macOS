@@ -9,6 +9,19 @@ var panelColor: Color { Color(nsColor: Style.theme.panel) }
 var openDotColor: Color { Color(nsColor: Style.theme.openDot) }
 var flourishColor: Color { Color(nsColor: Style.theme.flourish) }
 var flourishHoverColor: Color { Color(nsColor: Style.theme.flourishHover) }
+
+// The corner flourish's two states.
+//
+// `flourishHover` was drawn for the old treatment, where the mark was painted
+// on and hovering lifted it a shade. Multiplied into the page it does nothing
+// visible: against panel's 0.925/0.859/0.745 it is 0.949/0.871/0.729 — the same
+// darkness, a different hue. Hovering has to *deepen* the mark now, so the
+// hover tint is panel taken a step toward the ink.
+var flourishRest: Color { panelColor }
+var flourishHovered: Color {
+    Color(nsColor: Style.theme.panel.blended(withFraction: 0.22, of: Style.theme.ink)
+        ?? Style.theme.panel)
+}
 var brownInk: Color { Color(nsColor: Style.theme.ink) }
 
 // The ink ladder — four steps, and only these four. Everything written in the
@@ -46,15 +59,18 @@ var panelDividerColor: Color { Color.black.opacity(0.12) }
 struct AnimatedFlourish: View {
     let tint: Color
 
-    // Only on the first appearance in a session. The view outlives the settings
-    // page opening and closing, but a replay every time it happened to remount
-    // would turn a small piece of delight into a tic.
-    private static var hasPlayed = false
+    // Keyed, so the onboarding envelope and the corner each draw themselves once
+    // rather than one stealing the other's turn. Per session: the view outlives
+    // the settings page opening and closing, and replaying every time it
+    // happened to remount would turn a small piece of delight into a tic.
+    let key: String
+    private static var played: Set<String> = []
     @State private var index: Int
 
-    init(tint: Color) {
+    init(tint: Color, key: String) {
         self.tint = tint
-        _index = State(initialValue: Self.hasPlayed ? Self.frames.count - 1 : 0)
+        self.key = key
+        _index = State(initialValue: Self.played.contains(key) ? Self.frames.count - 1 : 0)
     }
 
     // Taken from the artwork rather than written down, so a re-export at a
@@ -88,8 +104,8 @@ struct AnimatedFlourish: View {
     }
 
     private func play() {
-        guard !Self.hasPlayed, Self.frames.count > 1 else { return }
-        Self.hasPlayed = true
+        guard !Self.played.contains(key), Self.frames.count > 1 else { return }
+        Self.played.insert(key)
         // Stepped by a repeating timer rather than animated: stop-motion is
         // discrete by definition, and anything that interpolates between frames
         // would take the character out of it.
@@ -2764,7 +2780,8 @@ struct ContentView: View {
             // corner flourish: decoration, and the door in and out of the hidden page
             if !AnimatedFlourish.frames.isEmpty {
                 AnimatedFlourish(
-                    tint: flourishHovering ? flourishHoverColor : panelColor)
+                    tint: flourishHovering ? flourishHovered : flourishRest,
+                    key: "corner")
                     // Multiplied, like every other flourish in the app — and
                     // for the same reason. Painted in `flourish` it was a hair
                     // off the sheet, which was invisible enough on flat colour

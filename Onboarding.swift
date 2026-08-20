@@ -188,15 +188,18 @@ struct OnboardingView: View {
                 // The envelope is scenery and wants no clicks at all.
                 .allowsHitTesting(false)
 
-            if let sprig = onboardingLogo {
-                Image(nsImage: sprig)
-                    .resizable()
-                    .renderingMode(.template) // so the sprig follows the theme
-                    .foregroundStyle(flourishColor)
-                    .frame(width: D.sprigW * s, height: D.sprigH * s)
+            // The same flourish the page corner draws, and drawn the same way:
+            // it makes itself, once, rather than being printed on the envelope
+            // already finished. Its own key, so this and the corner each get a
+            // turn instead of the first one to appear using up both.
+            if !AnimatedFlourish.frames.isEmpty {
+                AnimatedFlourish(tint: flourishColor, key: "onboarding")
+                    .frame(width: D.sprigH * AnimatedFlourish.aspect * s,
+                           height: D.sprigH * s)
                     .offset(
                         x: (D.sprigCX - D.sprigW / 2) * s,
                         y: (D.sprigCY - D.sprigH / 2) * s)
+                    .allowsHitTesting(false)
             }
         }
         .frame(width: D.envW * s, height: D.envH * s, alignment: .topLeading)
