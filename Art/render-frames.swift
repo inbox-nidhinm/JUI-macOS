@@ -25,6 +25,12 @@ let targetHeight = Double(CommandLine.arguments[3])!
 // needs no separate maths. `rotate(θ) scaleY(-1)` is flip-then-rotate in CSS's
 // right-to-left order — the same composition the static assets were baked with.
 let degrees = CommandLine.arguments.count > 4 ? Double(CommandLine.arguments[4])! : 0
+// Zero means *no transform at all*, not "rotate by nothing": the flip has to go
+// with the rotation or not happen. Applying `scaleY(-1)` unconditionally turned
+// the upright corner mark upside down while leaving the rotated sets correct,
+// which is a hard thing to spot in a contact sheet of a symmetrical-looking
+// sprig and an easy one to spot in the corner of the page.
+let transform = degrees == 0 ? "none" : "rotate(\(degrees)deg) scaleY(-1)"
 
 let files = (try! FileManager.default.contentsOfDirectory(atPath: svgDir))
     .filter { $0.hasSuffix(".svg") }.sorted()
@@ -48,7 +54,7 @@ func page() -> String {
       /* drawn smaller than the cell so a rotation cannot clip at the corners:
          a 380 square has a 537 diagonal, inside the 540 cell */
       .c svg{width:380px !important;height:380px !important;display:block;
-             transform:rotate(\(degrees)deg) scaleY(-1);transform-origin:center}
+             transform:\(transform);transform-origin:center}
     </style></head><body><div class='g'>\(cells)</div></body></html>
     """
 }
