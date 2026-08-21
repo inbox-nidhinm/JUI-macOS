@@ -193,9 +193,9 @@ struct OnboardingView: View {
             // it makes itself, once, rather than being printed on the envelope
             // already finished. Its own key, so this and the corner each get a
             // turn instead of the first one to appear using up both.
-            if !AnimatedFlourish.frames.isEmpty {
-                AnimatedFlourish(tint: flourishColor, key: "onboarding", replays: true)
-                    .frame(width: D.sprigH * D.sprigGrowth * AnimatedFlourish.aspect * s,
+            if !AnimatedFlourish.frames(.corner).isEmpty {
+                AnimatedFlourish(tint: flourishColor, play: .always)
+                    .frame(width: D.sprigH * D.sprigGrowth * AnimatedFlourish.aspect(.corner) * s,
                            height: D.sprigH * D.sprigGrowth * s)
                     .offset(
                         x: (D.sprigCX - D.sprigW / 2) * s,

@@ -19,6 +19,12 @@ import WebKit
 let svgDir = CommandLine.arguments[1]
 let outDir = CommandLine.arguments[2]
 let targetHeight = Double(CommandLine.arguments[3])!
+// Optional flip-and-rotate, so the same source serves the upright corner mark
+// and the rotated ones on folder tiles and stickies. Applied in CSS and left to
+// WebKit, which also means the crop below measures the *transformed* ink and
+// needs no separate maths. `rotate(θ) scaleY(-1)` is flip-then-rotate in CSS's
+// right-to-left order — the same composition the static assets were baked with.
+let degrees = CommandLine.arguments.count > 4 ? Double(CommandLine.arguments[4])! : 0
 
 let files = (try! FileManager.default.contentsOfDirectory(atPath: svgDir))
     .filter { $0.hasSuffix(".svg") }.sorted()
@@ -37,8 +43,12 @@ func page() -> String {
     <!doctype html><html><head><style>
       html,body{margin:0;padding:0;background:transparent}
       .g{display:grid;grid-template-columns:repeat(\(columns),\(Int(cell))px);width:\(Int(pageW))px}
-      .c{width:\(Int(cell))px;height:\(Int(cell))px;overflow:hidden}
-      .c svg{width:\(Int(cell))px !important;height:\(Int(cell))px !important;display:block}
+      .c{width:\(Int(cell))px;height:\(Int(cell))px;overflow:hidden;
+         display:flex;align-items:center;justify-content:center}
+      /* drawn smaller than the cell so a rotation cannot clip at the corners:
+         a 380 square has a 537 diagonal, inside the 540 cell */
+      .c svg{width:380px !important;height:380px !important;display:block;
+             transform:rotate(\(degrees)deg) scaleY(-1);transform-origin:center}
     </style></head><body><div class='g'>\(cells)</div></body></html>
     """
 }

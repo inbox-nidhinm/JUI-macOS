@@ -47,87 +47,112 @@ var dividerColor: Color { Color(nsColor: Style.theme.divider) }
 // it cannot invert the way a fixed colour can.
 var panelDividerColor: Color { Color.black.opacity(0.12) }
 
-// The corner flourish, drawn on rather than simply appearing.
+// A flourish that draws itself on, from the stop-motion frames.
 //
-// Thirty frames of a stop-motion sequence, played once at 12fps and then held —
-// the last frame *is* the flourish, so nothing swaps in at the end and there is
-// no resting artwork separate from the animation.
+// Three sets ship: the same drawing at the three angles the static artwork used
+// — upright for the page corner, rotated for folder tiles and for stickies — so
+// animating a mark changes nothing about how it looks once it settles. The last
+// frame *is* the finished flourish; nothing swaps in at the end.
 //
-// The frames are white silhouettes on transparency, so they tint like every
-// other piece of art here and one sequence serves all six themes. They are
-// rasterised at build time; see build.sh on why this one is raster.
+// Frames are white silhouettes tinted at draw time, so one set serves all six
+// themes.
+enum FlourishSet: String {
+    case corner, folder, sticky
+}
+
 struct AnimatedFlourish: View {
-    let tint: Color
-
-    // Keyed, so the onboarding envelope and the corner each draw themselves once
-    // rather than one stealing the other's turn. Per session: the view outlives
-    // the settings page opening and closing, and replaying every time it
-    // happened to remount would turn a small piece of delight into a tic.
-    let key: String
-    // Onboarding sets this: its flourish draws itself every time the envelope
-    // is opened, not once per launch. The page corner does the opposite —
-    // replaying it on every remount would turn a small piece of delight into a
-    // tic — which is why the behaviour is per caller rather than global.
-    let replays: Bool
-    private static var played: Set<String> = []
-    @State private var index: Int
-
-    init(tint: Color, key: String, replays: Bool = false) {
-        self.tint = tint
-        self.key = key
-        self.replays = replays
-        _index = State(initialValue: !replays && Self.played.contains(key)
-                       ? Self.frames.count - 1 : 0)
+    // When a flourish draws itself is the caller's decision, not the view's.
+    // The same mark is a permanent fixture in one place, a replayable flourish
+    // in another, and a small celebration for something just made in a third.
+    enum Play {
+        /// Already there. Show the finished drawing and never animate.
+        case never
+        /// Draws itself the first time this key appears, then holds.
+        case onceInSession(key: String)
+        /// Draws itself every time it appears.
+        case always
     }
 
-    // Taken from the artwork rather than written down, so a re-export at a
-    // different crop cannot leave the frame stretching it.
-    static var aspect: CGFloat {
-        guard let first = frames.first, first.size.height > 0 else { return 1 }
+    let set: FlourishSet
+    let tint: Color
+    let play: Play
+    @State private var index: Int
+
+    init(set: FlourishSet = .corner, tint: Color, play: Play) {
+        self.set = set
+        self.tint = tint
+        self.play = play
+        _index = State(initialValue: Self.startIndex(set: set, play: play))
+    }
+
+    private static func startIndex(set: FlourishSet, play: Play) -> Int {
+        let last = max(0, frames(set).count - 1)
+        switch play {
+        case .never: return last
+        case .always: return 0
+        case .onceInSession(let key): return played.contains(key) ? last : 0
+        }
+    }
+
+    private static var cache: [String: [NSImage]] = [:]
+    private static var played: Set<String> = []
+
+    static func frames(_ set: FlourishSet) -> [NSImage] {
+        if let hit = cache[set.rawValue] { return hit }
+        let loaded = (1...30).compactMap { n -> NSImage? in
+            Bundle.main.url(forResource: String(format: "frame-%02d", n),
+                            withExtension: "png",
+                            subdirectory: "FlourishFrames/" + set.rawValue)
+                .flatMap { NSImage(contentsOf: $0) }
+        }
+        cache[set.rawValue] = loaded
+        return loaded
+    }
+
+    /// Taken from the artwork rather than written down, so a re-export at a
+    /// different crop cannot leave a frame stretching it.
+    static func aspect(_ set: FlourishSet) -> CGFloat {
+        guard let first = frames(set).first, first.size.height > 0 else { return 1 }
         return first.size.width / first.size.height
     }
 
-    static let frames: [NSImage] = (1...30).compactMap { n in
-        Bundle.main.url(forResource: String(format: "frame-%02d", n),
-                        withExtension: "png", subdirectory: "FlourishFrames")
-            .flatMap { NSImage(contentsOf: $0) }
-    }
-
     // 30 frames over 2.5s in the source, which is 12fps.
-    private static let frameDuration = 1.0 / 12.0
+    static let frameDuration = 1.0 / 12.0
 
-    /// How long the whole sequence takes, for callers that need to wait it out.
+    /// How long the sequence takes, for callers that need to wait it out.
     /// Derived from the frames actually shipped, so a re-export of a different
     /// length keeps whatever is sequenced behind it in step.
-    static var duration: TimeInterval { Double(frames.count) * frameDuration }
+    static var duration: TimeInterval { Double(frames(.corner).count) * frameDuration }
 
     var body: some View {
-        Group {
-            if Self.frames.indices.contains(index) {
-                Image(nsImage: Self.frames[index])
-                    .resizable()
-                    .renderingMode(.template)
+        let all = Self.frames(set)
+        return Group {
+            if all.indices.contains(index) {
+                Image(nsImage: all[index]).resizable().renderingMode(.template)
             } else {
                 Color.clear // no frames shipped: draw nothing rather than a box
             }
         }
         .foregroundStyle(tint)
-        .onAppear(perform: play)
+        .onAppear(perform: start)
     }
 
-    private func play() {
-        guard replays || !Self.played.contains(key), Self.frames.count > 1 else { return }
-        Self.played.insert(key)
+    private func start() {
+        let all = Self.frames(set)
+        guard all.count > 1 else { return }
+        switch play {
+        case .never: return
+        case .onceInSession(let key):
+            guard !Self.played.contains(key) else { return }
+            Self.played.insert(key)
+        case .always: break
+        }
         index = 0
         // Stepped by a repeating timer rather than animated: stop-motion is
-        // discrete by definition, and anything that interpolates between frames
-        // would take the character out of it.
+        // discrete by definition, and interpolating between frames would take
+        // the character out of it.
         let timer = Timer.scheduledTimer(withTimeInterval: Self.frameDuration, repeats: true) { t in
-            if index < Self.frames.count - 1 {
-                index += 1
-            } else {
-                t.invalidate()
-            }
+            if index < all.count - 1 { index += 1 } else { t.invalidate() }
         }
         RunLoop.main.add(timer, forMode: .common) // keeps drawing while scrolling
     }
@@ -470,10 +495,18 @@ final class NotesStore: ObservableObject {
         return (try? JSONDecoder().decode([Sticky].self, from: data)) ?? []
     }
 
+    // Made during this session, so their flourish can draw itself on once while
+    // everything already on the page keeps still. Never cleared: the set of
+    // things you have made since launch is small, and the alternative — a flag
+    // wiped on a timer — races the view that is meant to read it.
+    @Published private(set) var freshFolders: Set<String> = []
+    @Published private(set) var freshStickies: Set<UUID> = []
+
     func addSticky(range: NSRange, left: Bool) -> UUID {
         var sticky = Sticky(id: UUID(), start: range.location, length: range.length, text: "")
         sticky.left = left
         stickies.append(sticky)
+        freshStickies.insert(sticky.id)
         stickiesHidden = false
         scheduleSave()
         return sticky.id
@@ -560,6 +593,7 @@ final class NotesStore: ObservableObject {
         try? fm.createDirectory(
             at: dir.appendingPathComponent(candidate, isDirectory: true),
             withIntermediateDirectories: true)
+        freshFolders.insert(candidate)
         refreshList()
         return candidate
     }
@@ -1087,23 +1121,28 @@ final class StickyView: NSView, NSTextViewDelegate {
     // The system's flourish, rasterised from the file's own vector with its
     // rotation and flip already baked in — see CLAUDE.md on why the transform
     // is baked at build time rather than applied here.
-    private static let flowerSource: NSImage? = {
-        guard let url = Bundle.main.url(forResource: "StickyFlourish", withExtension: "png")
-        else { return nil }
-        return NSImage(contentsOf: url)
-    }()
+    // The same stop-motion frames the rest of the app uses, at the sticky's
+    // angle. A stamp made during this session draws its flourish on; one loaded
+    // from disk shows the finished mark straight away.
+    private static var frames: [NSImage] { AnimatedFlourish.frames(.sticky) }
 
-    // The flower is a single-colour silhouette with a clean alpha channel, so it
-    // can be recoloured wholesale to follow the theme. SwiftUI does this with
+    // The flourish is a single-colour silhouette with a clean alpha channel, so
+    // it can be recoloured wholesale to follow the theme. SwiftUI does that with
     // .renderingMode(.template); here the drawing is by hand, so the tint is
     // baked into a copy — sourceAtop over the source directly would catch the
-    // sticky's own background, which is already opaque behind it. Cached per
-    // theme so it isn't rebuilt on every draw pass.
+    // sticky's own background, which is already opaque behind it.
+    //
+    // Cached per theme *and* frame. Thirty frames across six themes is more
+    // entries than the old single image, but they are built only as they are
+    // reached, so a sticky that never animates costs exactly one.
     private static var flowerCache: [String: NSImage] = [:]
 
-    private static func flower(for theme: Theme) -> NSImage? {
-        if let hit = flowerCache[theme.id] { return hit }
-        guard let src = flowerSource else { return nil }
+    private static func flower(_ index: Int, for theme: Theme) -> NSImage? {
+        let all = frames
+        guard all.indices.contains(index) else { return nil }
+        let key = theme.id + "-" + String(index)
+        if let hit = flowerCache[key] { return hit }
+        let src = all[index]
         let out = NSImage(size: src.size)
         out.lockFocus()
         src.draw(at: .zero, from: .zero, operation: .sourceOver, fraction: 1)
@@ -1112,7 +1151,7 @@ final class StickyView: NSView, NSTextViewDelegate {
         theme.panel.set()
         NSRect(origin: .zero, size: src.size).fill(using: .sourceAtop)
         out.unlockFocus()
-        flowerCache[theme.id] = out
+        flowerCache[key] = out
         return out
     }
 
@@ -1130,7 +1169,10 @@ final class StickyView: NSView, NSTextViewDelegate {
     private static let flourishWidth: CGFloat = 0.4034
     private static let flourishLeft: CGFloat = 0.6281
     private static let flourishOverhang: CGFloat = 0.0575
-    private static let flourishAspect: CGFloat = 529.0 / 484.0 // the artwork's own
+    private static var flourishAspect: CGFloat {
+        // the artwork's own, read from the frames rather than written down
+        1 / max(AnimatedFlourish.aspect(.sticky), 0.01)
+    }
 
     private func flourishRect() -> NSRect {
         let w = bounds.width * Self.flourishWidth
@@ -1151,9 +1193,16 @@ final class StickyView: NSView, NSTextViewDelegate {
     var onUnpin: (() -> Void)?
     var isPinned: (() -> Bool)?
 
-    init(id: UUID, text: String) {
+    // Which frame of the flourish is showing. A stamp that is not new starts on
+    // the last one, which is the finished drawing.
+    private var flourishIndex: Int
+    private var flourishTimer: Timer?
+
+    init(id: UUID, text: String, drawsFlourish: Bool = false) {
         stickyID = id
+        flourishIndex = drawsFlourish ? 0 : max(0, Self.frames.count - 1)
         super.init(frame: .zero)
+        if drawsFlourish { startFlourish() }
         noteView.isRichText = false
         noteView.font = NSFont(name: "Courier", size: 13)
         noteView.textColor = Style.ink
@@ -1236,14 +1285,37 @@ final class StickyView: NSView, NSTextViewDelegate {
         // comes out a deep tan rather than a pale cream. Painted opaque it was
         // far too light, and the SVG's fill attribute gives no hint of this: a
         // blend mode doesn't survive that export.
-        Self.flower(for: Style.theme)?.draw(
+        Self.flower(flourishIndex, for: Style.theme)?.draw(
             in: flourishRect(), from: .zero, operation: .multiply, fraction: 1)
         NSGraphicsContext.restoreGraphicsState()
     }
 
+    // Stepped by a timer rather than animated, like every other playing of this
+    // sequence: stop-motion is discrete, and interpolating between frames would
+    // take the character out of it. Added in .common mode so it keeps going
+    // while the page is scrolled.
+    private func startFlourish() {
+        guard Self.frames.count > 1 else { return }
+        let timer = Timer.scheduledTimer(
+            withTimeInterval: AnimatedFlourish.frameDuration, repeats: true
+        ) { [weak self] t in
+            guard let self = self else { t.invalidate(); return }
+            if self.flourishIndex < Self.frames.count - 1 {
+                self.flourishIndex += 1
+                self.needsDisplay = true
+            } else {
+                t.invalidate()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        flourishTimer = timer
+    }
+
+    deinit { flourishTimer?.invalidate() }
+
     func applyTheme() {
         noteView.applyTheme()
-        needsDisplay = true // the stamp body and its flower are drawn by hand
+        needsDisplay = true // the stamp body and its flourish are drawn by hand
     }
 
     private func stickyMenu() -> NSMenu {
@@ -1480,7 +1552,9 @@ final class PlainTextView: NSTextView {
         let hidden = store.stickiesHidden
         for sticky in list.sorted(by: { $0.start < $1.start }) {
             let view = stickyViews[sticky.id] ?? {
-                let v = StickyView(id: sticky.id, text: sticky.text)
+                let v = StickyView(
+                    id: sticky.id, text: sticky.text,
+                    drawsFlourish: self.notesStore?.freshStickies.contains(sticky.id) ?? false)
                 v.onTextChange = { [weak self] text in
                     self?.notesStore?.updateStickyText(sticky.id, text)
                 }
@@ -2731,6 +2805,43 @@ struct ContentView: View {
         return .none
     }
 
+    // Decoration, and the door in and out of the hidden page.
+    //
+    // Extracted from `body` because the type checker gave up on it: the stack
+    // had grown past what it will infer in reasonable time, and the error names
+    // the whole expression rather than the part that tipped it over. Pulling
+    // any sizeable branch out fixes it; this was the newest.
+    @ViewBuilder
+    private var cornerFlourish: some View {
+        if !AnimatedFlourish.frames(.corner).isEmpty {
+            AnimatedFlourish(
+                tint: flourishHovering ? flourishHovered : flourishRest,
+                play: .onceInSession(key: "corner"))
+                // Multiplied, like every other flourish in the app — and for the
+                // same reason. Painted in `flourish` it was a hair off the sheet,
+                // invisible enough on flat colour and completely invisible once
+                // the page took paper. Panel drawn *through* the page reads as a
+                // soft tan on it, and darkens further under the pointer.
+                .blendMode(.multiply)
+                // Height from the system's 186.1 units at 16/22; width follows
+                // the artwork's own aspect.
+                .frame(width: 135.4 * AnimatedFlourish.aspect(.corner), height: 135.4)
+                .contentShape(Rectangle())
+                .onHover { flourishHovering = $0 }
+                .arrowCursorZone()
+                .onTapGesture {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        store.hiddenShown.toggle()
+                        showNotes = false
+                    }
+                }
+                .padding(.leading, 31)
+                .padding(.bottom, 38)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                .ignoresSafeArea()
+        }
+    }
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             // Bare colour: the textured page is painted by the text view on
@@ -2790,35 +2901,7 @@ struct ContentView: View {
                 .transition(.opacity)
             }
 
-            // corner flourish: decoration, and the door in and out of the hidden page
-            if !AnimatedFlourish.frames.isEmpty {
-                AnimatedFlourish(
-                    tint: flourishHovering ? flourishHovered : flourishRest,
-                    key: "corner")
-                    // Multiplied, like every other flourish in the app — and
-                    // for the same reason. Painted in `flourish` it was a hair
-                    // off the sheet, which was invisible enough on flat colour
-                    // and became completely invisible once the page took paper.
-                    // Panel drawn *through* the page reads as a soft tan on it,
-                    // and darkens further under the pointer.
-                    .blendMode(.multiply)
-                    // Height from the system's 186.1 units at 16/22; width
-                    // follows the artwork's own aspect.
-                    .frame(width: 135.4 * AnimatedFlourish.aspect, height: 135.4)
-                    .contentShape(Rectangle())
-                    .onHover { flourishHovering = $0 }
-                    .arrowCursorZone()
-                    .onTapGesture {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            store.hiddenShown.toggle()
-                            showNotes = false
-                        }
-                    }
-                    .padding(.leading, 31)
-                    .padding(.bottom, 38)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                    .ignoresSafeArea()
-            }
+            cornerFlourish
 
             if showNotes {
                 // click anywhere outside the panel to dismiss it
@@ -3295,20 +3378,25 @@ struct ContentView: View {
                     // clip below is what the design intends, not an accident.
                     .overlay(alignment: .topLeading) {
                         GeometryReader { geo in
-                            if let art = folderFlourishImage {
-                                let w = geo.size.width * 0.7104
-                                Image(nsImage: art)
-                                    .resizable()
-                                    .renderingMode(.template)
-                                    .foregroundStyle(panelColor)
-                                    .frame(width: w,
-                                           height: w * (art.size.height / art.size.width))
-                                    .offset(x: geo.size.width * 0.4130,
-                                            y: geo.size.height * 0.0036)
-                                    // drawn *through* the tile rather than onto
-                                    // it — see the note on the sticky's flourish
-                                    .blendMode(.multiply)
-                            }
+                            let w = geo.size.width * 0.7104
+                            AnimatedFlourish(
+                                set: .folder,
+                                tint: panelColor,
+                                // A folder made in this session draws its mark
+                                // on. Everything already on the shelf keeps
+                                // still — otherwise opening the panel would set
+                                // the whole grid going at once, which reads as
+                                // a glitch rather than as a welcome.
+                                play: store.freshFolders.contains(folder)
+                                    ? .onceInSession(key: "folder-" + folder)
+                                    : .never)
+                                .frame(width: w,
+                                       height: w / AnimatedFlourish.aspect(.folder))
+                                .offset(x: geo.size.width * 0.4130,
+                                        y: geo.size.height * 0.0036)
+                                // drawn *through* the tile rather than onto it —
+                                // see the note on the sticky's flourish
+                                .blendMode(.multiply)
                         }
                     }
                     // scopes that multiply to the tile, so it darkens the card
