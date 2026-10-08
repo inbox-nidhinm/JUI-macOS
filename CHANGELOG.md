@@ -191,6 +191,47 @@ A plain writing pad for Juilee. Built July 16–17, 2026.
     the vault picker exists once instead of twice, and the settings rows are one
     builder instead of three near-identical blocks.
 
+14. **Stickies from the phone** — the iPhone port reworked the sticky over an
+    evening of use, and this brings every part of it that means anything on a
+    Mac back to the Mac, so a sticky looks and behaves the same in both places
+    (they share one vault now, in iCloud Drive).
+
+    *Put away, a sticky is a crumpled ball* in its margin, beside the line it
+    is about — the margin used to hold the whole card, open, all the time.
+    Clicked, the ball lifts and opens out flat into the card, in the margin
+    where it sat; clicked away from, or done, it crushes back. Deleted or never
+    written in, it crumples to nothing. The fold is the phone's
+    (`Crumple.swift`), taken across nearly line for line: a SceneKit sheet
+    printed with a picture of the card, crease depth 0.8, 1.15s out and 0.95s
+    back. The real card is shown only once the sheet lies flat, which is also
+    why its flourish now draws itself on *every* time it is opened, after the
+    unfold and never during it. Reduce Motion skips the fold.
+
+    *The words a sticky is about carry a wash* of its colour — a highlighter
+    run over them — so the ball says that there is a note and the wash says
+    which words. Painted with the page under the text, the size and shape of a
+    selection, never stored in the RTF.
+
+    *The card reads more easily.* 14pt at 140% leading, up from 13 on the
+    system's default, and a smaller flourish (0.30 of the stamp, from 0.40)
+    with clearer air above it; at the old size its blooms reached into the
+    last lines.
+
+    *Delete and done are marks under the card* while it is being written in —
+    the Figma system's hand-drawn bin and tick (node 330:433), in the ink's
+    muted step on a faint tile — rather than only living in the right-click
+    menu. The vectors are scatter-brush strokes, so they are rasterised through
+    WebKit at build time like the flourish frames (`Art/render-marks.swift`).
+
+    *Gone.* Dragging a sticky out to pin it on the page — a ball has no line to
+    go back to from there; old pin positions stay in the file, unread. And the
+    "hide sticky notes" command in ⌘K, which a page of small balls has no need
+    for.
+
+    *The floor moves from macOS 13 to 26*, still universal. Nothing needed the
+    old systems any more; the one availability gate went, and every
+    `onChange` takes the current two-parameter form.
+
 ## Minor updates & polish
 
 - **New folder without the context menu**: the folder grid ends with a `+`

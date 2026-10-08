@@ -4,7 +4,7 @@ A single-window macOS writing pad. A cream sheet, Courier, and no chrome — bui
 to feel like a page rather than an app.
 
 It was written as a gift, so it optimises for how it *feels* to write in rather
-than for feature count. Four Swift files and a shell script: no Xcode project,
+than for feature count. Five Swift files and a shell script: no Xcode project,
 no package manager, no dependencies.
 
 ## What it does
@@ -16,9 +16,10 @@ no package manager, no dependencies.
   — readable in Finder, portable, no database.
 - **Folders**, one level deep, that are real subdirectories on disk. Deleting a
   folder deletes the notes inside it; there is no trash.
-- **Sticky notes** anchored to a range of text rather than to pixels:
-  postage-stamp margin annotations that survive edits and reflow, and can be
-  dragged out to pin anywhere on the page.
+- **Sticky notes** anchored to a range of text rather than to pixels, which
+  survive edits and reflow. Put away, a sticky is a crumpled ball in the
+  margin beside its line, and the words it is about carry a faint wash of
+  its colour; clicked, the ball opens out into a postage-stamp card.
 - **⌘K search** across every note, with snippets, folder prefixes, and a command
   row or two.
 - **Six themes** — cream, mint, sky, coral, lilac, orchid — applied instantly.
@@ -36,7 +37,7 @@ no package manager, no dependencies.
 ./build.sh
 ```
 
-Produces a universal `JUI.app` (Apple Silicon + Intel, macOS 13 and later),
+Produces a universal `JUI.app` (Apple Silicon + Intel, macOS 26 and later),
 ad-hoc signs and verifies it, stamps a fresh build number, and packages
 `JUI.zip`. Needs the Swift toolchain from Xcode or the Command Line Tools.
 
@@ -59,6 +60,7 @@ confusing failures.
 | File | What's in it |
 |---|---|
 | `main.swift` | Colour and type tokens, store, text engine, stickies, panel, search, settings |
+| `Crumple.swift` | The crumpled-ball sticky and its unfold |
 | `Theme.swift` | The six palettes and the theme picker |
 | `Texture.swift` | The paper: which stock each surface takes, and how hard |
 | `Onboarding.swift` | First-run envelope flow |
@@ -66,4 +68,4 @@ confusing failures.
 | `CLAUDE.md` | Architecture notes, and the invariants worth not breaking |
 | `CHANGELOG.md` | What was built, in order, and why |
 
-Requires macOS 13 or later.
+Requires macOS 26 or later.

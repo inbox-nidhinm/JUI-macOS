@@ -9,24 +9,27 @@ map of *where things are* and *what will break if you touch them*.
 
 ## Shape of the project
 
-No Xcode project. Four Swift files compiled directly by `swiftc`:
+No Xcode project. Five Swift files compiled directly by `swiftc`:
 
 | File | Lines | Contents |
 |---|---|---|
-| `main.swift` | ~3500 | Everything: tokens, store, text engine, stickies, panel, search, settings |
+| `main.swift` | ~4200 | Everything: tokens, store, text engine, stickies, panel, search, settings |
+| `Crumple.swift` | ~560 | The crumpled-ball sticky: the SceneKit sheet, its creases, `CrumpleDirector` |
 | `Theme.swift` | ~290 | The six palettes, the `AppIcon` recolour, the mood-dot `ThemePicker` |
 | `Texture.swift` | ~240 | The paper: which stock each surface takes, at what grain and strength |
 | `Onboarding.swift` | ~510 | First-run envelope flow only |
 | `build.sh` | | Universal build + ad-hoc sign + verify |
-| `Info.plist` | | `com.nidhin.jui`, `LSMinimumSystemVersion 13.0` |
+| `Info.plist` | | `com.nidhin.jui`, `LSMinimumSystemVersion 26.0` |
 
 **Adding a `.swift` file means adding it to the `swiftc` line in `build.sh`** —
 grep for `for arch in`.
 
 **Art ships as directories, not as a list of filenames.** `Contents/Resources`
 gets `AppIcon.icns`, `Textures/` (three greyscale JPEGs, derived from
-`Art/Textures`) and `FlourishFrames/{corner,folder,sticky}/` (the stop-motion
-frames, derived from `Art/Vectors`). Both are copied wholesale, which is
+`Art/Textures`), `FlourishFrames/{corner,folder,sticky}/` (the stop-motion
+frames, derived from `Art/Vectors`) and `StickyButtons/` (the sticky's delete
+and done marks, derived from `Art/Vectors/StickyButtons` by
+`Art/render-marks.swift`). All are copied wholesale, which is
 deliberate: the per-asset loop that used to sit here did nothing when someone
 added a file and forgot to name it, and on this branch drawing nothing and
 drawing a very subtle grain look identical. There are no loose PNGs at the repo
@@ -49,7 +52,10 @@ enough to be believed.
 | `NotesStore` | `final class NotesStore` | The single source of truth for everything |
 | Document loading | `MARK: Getting a document` | `load` / `loadBlank` — every route into the editor |
 | `SmoothCaret` | `final class SmoothCaret` | Shared caret glide (note editor *and* stickies) |
-| `StickyView` | `final class StickyView` | Postage-stamp margin annotation, drawn by hand |
+| `StickyView` | `final class StickyView` | The open sticky's card: postage stamp, drawn by hand |
+| `StickyBallView` | `final class StickyBallView` | A sticky put away: the crumpled ball in the margin |
+| `StampButton` | `final class StampButton` | Delete and done, hung under the card while it is written in |
+| Sticky out/away | `func openSticky` | `openSticky` / `putAwaySticky` / `syncStickies` on `PlainTextView` |
 | `PlainTextView` | `final class PlainTextView` | The `NSTextView` subclass — bullets, ruling, cursors, paste, `applyTheme` |
 | `HouseField` | `struct HouseField` | The app's only text field |
 | `RichTextEditor` | `struct RichTextEditor` | `NSViewRepresentable` bridge + `Coordinator` |
@@ -65,7 +71,6 @@ share **one selection space** (`selected` indexes across both), so the arrows wa
 the whole list and Return fires whatever is highlighted. A command row carries the
 same highlight box as a result so it reads as selectable.
 
-- **`hide/show sticky notes`** — appears on an empty query or one about stickies.
 - **`onboard again`** — properly hidden: needs three characters and a real prefix
   of "onboard", so it can't surface while searching notes. Calls
   `NotesStore.replayOnboarding()`, which deliberately leaves `onboardingCompleted`
@@ -190,8 +195,40 @@ everywhere. Smart dashes silently broke `---` rules once already.
 **Sticky anchors are character ranges, remapped on every edit** via
 `textView(_:shouldChangeTextIn:)` → `store.remapStickies`. Anchors inside a
 deleted range collapse to the edit point rather than dying. `syncStickies`
-rebuilds positions on every layout pass. A sticky measures its own height, and
+rebuilds positions on every layout pass. A card measures its own height, and
 must be width-set *before* measuring or long notes load at default size.
+
+**A sticky is a crumpled ball until it is opened** — the same as on the
+iPhone port (`~/Documents/Claude Code/JUI-iOS`), and from the same code. The
+ball sits in the sticky's margin, just past where the ruling ends, beside its
+line; two on one line stack. Clicking one runs the fold in `Crumple.swift`: a
+SceneKit sheet printed with a picture of the card (`StickyView.picture()`),
+lifting out of the ball and opening flat into the card's place. **The real card
+is hidden until that sheet lies flat**, then shown, given the caret, and its
+flourish draws itself on — every opening, not only the first. Losing focus (a
+click anywhere else, or done) puts it away the same way round; a sticky that is
+deleted or was never written in crumples to nothing and is removed. One is out
+at a time — taking out another puts the first straight back without a fold.
+Reduce Motion skips the fold. The card is made fresh per opening and the page
+holds only that one; everything else on the page is a ball.
+
+Rules that keep it working:
+- **`openID` is the sticky that is out; `card` may outlive it** while its sheet
+  is on the way back, and is dropped once the sheet takes over (`cardLeft`).
+- **The stage is drawn above everything** — cards and balls are added *below*
+  `crumple.view`, never with a bare `addSubview`.
+- **The fold's coordinates are the page's**, y down: the director takes the
+  card's frame, the ball's centre and a stage rect around both, all in page
+  points, and converts.
+- **There is no pinning any more.** Stickies used to drag out onto the page;
+  the ball has nowhere to go back to from there. `pinX`/`pinY`/`rotation` stay
+  in `Sticky`, unread, so files from older builds decode and keep them.
+
+**The words a sticky is about carry a wash** of the sticky colour at 26%,
+painted in `drawBackground` after the ruling — so beneath the text — sized and
+placed as the selection's bands are. Never a storage attribute: it would be
+written into the RTF. `syncStickies` asks for a redraw when any anchor range
+changes.
 
 **`normalizeFonts` is a safety net, not the styling path.** It forces family/size,
 paragraph style, and ink color, and strips underline/strike/link/shadow/etc. from
@@ -264,21 +301,18 @@ writes a `@Published`. Publishing from inside an update pass is not allowed. The
 `DispatchQueue.main.async` around it is what moves that write after the pass;
 don't unwrap it because it looks redundant.
 
-## macOS 13 floor — the hard compatibility rule
+## macOS 26 floor
 
-The app must keep launching on macOS 13, universal (arm64 + x86_64). An
-arm64-only or 14-only build fails on other Macs with a bare
-*"The application can't be opened"*, which reads like a signing problem and isn't.
+The app launches on macOS 26 and later, universal (arm64 + x86_64). It was 13
+until the sticky rework (October 2026), when the floor was raised on purpose:
+nothing needs to run on older systems, and it removed the gates rather than
+adding more. `onChange(of:)` takes the two-parameter closure everywhere now,
+`SmoothCaret` hides `NSTextInsertionIndicator` without an `#available`, and the
+fold is driven by `NSView.displayLink`.
 
-Two consequences for any new SwiftUI you write:
-
-1. **`onChange(of:)` must use the single-parameter closure** — `{ new in … }`.
-   The two-parameter `{ old, new in … }` form is macOS 14+. Every existing call
-   site uses the old form on purpose.
-2. **Anything 14+ needs `if #available`.** There is now exactly **one** gated
-   site: `NSTextInsertionIndicator`, in `SmoothCaret`. ⌘K's arrow navigation used
-   to be the second, via `onKeyPress`; `HouseField` handles arrows through
-   AppKit's `doCommandBy` instead, which works on 13, so that gate is gone.
+Keep the build universal: 26 is the last macOS on Intel, and an arm64-only
+build fails there with a bare *"The application can't be opened"*, which reads
+like a signing problem and isn't.
 
 ### Text fields are `HouseField`, not SwiftUI's `TextField`
 
@@ -497,7 +531,7 @@ from the staging directory. Notarisation would fix it properly; until then, do
 not run the dev build out of `~/Documents`. The zip and the bundle in the repo
 are untouched, so what ships is unaffected.
 
-One command does everything: universal build, macOS 13 floor, per-build
+One command does everything: universal build, macOS 26 floor, per-build
 `CFBundleVersion` stamp, ad-hoc sign, signature verify, and `JUI.zip`. It stops
 rather than shipping a broken bundle. Then to see it:
 
@@ -589,7 +623,8 @@ Two halves have to be kept in step:
    `selectedTextAttributes`) and colours baked into the text storage's
    attributes have to be pushed. That's what `PlainTextView.applyTheme()` is
    for — `RichTextEditor.updateNSView` calls it when `themeID` changes, and it
-   fans out to `SmoothCaret`, `SelectionIconView`, every `StickyView`, and the
+   fans out to `SmoothCaret`, `SelectionIconView`, the open `StickyView`, every
+   `StickyBallView`, the two `StampButton`s, and the
    traffic-light overlay in the title bar. **Any new AppKit view that holds a
    colour needs an `applyTheme()` and a call added to that fan-out.**
 
