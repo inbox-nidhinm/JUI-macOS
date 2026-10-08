@@ -109,6 +109,88 @@ A plain writing pad for Juilee. Built July 16–17, 2026.
     scroll position and undo stack. All four bundled sprigs are now
     template-tinted rather than drawn raw, so they follow the theme too.
 
+13. **Audit pass on the rebuild** — the look rebuild left a trail behind it, and
+    this is the sweep. Nothing here changes what the app does; several things
+    change what it costs.
+
+    *Removed, because nothing drew them any more.* All six root PNGs
+    (`Flourish`, `StickyFlower`, `FolderSprig`, `OnboardingLogo`,
+    `StickyFlourish`, `FolderFlourish`) — the stop-motion frames replaced every
+    static mark, and these were still being copied into every bundle with
+    nothing left in the app that read them. With them went the globals that
+    loaded them, the per-asset copy loop in `build.sh`, three `Theme` tokens
+    whose subjects no longer exist (`divider`, `rule`, `flourishHover` — all
+    three became *tones* rather than colours), the `dividerColor` and
+    `flourishHoverColor` reads, two unused onboarding design constants, and the
+    word count's filter for a box-drawing rule that nothing writes.
+
+    *Memory.* The sticky's tinted flourish frames were cached by theme **and**
+    frame, so changing mood added a set of thirty decoded bitmaps rather than
+    replacing one — six moods and one animated sticky reached roughly 106MB,
+    none of it reachable again. The cache now holds the current theme only.
+    ⌘K's full-text cache is dropped a beat after the palette closes instead of
+    being held for the life of the process.
+
+    *Speed.* `saveNow` ends in `refreshList`, and saves are debounced on typing
+    — so every 300ms pause re-read and re-parsed the RTF of *every note in the
+    vault* to re-derive titles. Titles are now cached against the modification
+    date they were read at, so a save re-parses the one file it just wrote.
+
+    *Fixed — the selection.* It drew as a band hanging in the air above the
+    words, clipping the tops of the letters, but only ever on the last line of a
+    note, which made it look intermittent rather than wrong. The fill sized
+    itself with `min(fragment.height, lineHeight + padding * 2)` while lifting
+    the box by `padding` — a clamp that holds only while the rect is taller than
+    the clamp. Measured, the rect AppKit hands over is not one height: 19pt on
+    the last line of the document, 48 on a line with another under it, 96 on a
+    line that ends a paragraph. On the last line the clamp did nothing and the
+    lift remained. Both the selection and `SmoothCaret` — which carried the same
+    construct, and changed height by 4pt between lines because of it — now take
+    their vertical extent from `Style.inkOffset`/`inkHeight`, the ink box, and
+    are one size on every line. The air around the words came down from 8pt to 5,
+    which is what the original app's whole-fragment highlight worked out to.
+
+    Fixing that exposed a second one underneath it: AppKit coalesces the
+    full-width interior of a multi-line selection into a single tall rect, so
+    selecting three lines from the start hands the first two over as *one* rect
+    three bands tall. Drawing one fixed-height band per rect highlighted its
+    first line and missed the others — the middle line of a three-line selection
+    had no highlight at all. The fill now asks the layout manager which line
+    fragments each rect covers and draws a band per line, rather than stepping by
+    a pitch that does not exist (48 inside a paragraph, 96 at the end of one).
+
+    *Fixed — the band's position.* It is centred between the two rules now
+    rather than on the ink, which are not the same place: the ruling centres the
+    font's line height, and Courier's 19pt line height carries its 16pt ink box
+    2.94 down from the top, so an ink-centred band sat 12.44pt from the rule
+    above and 9.56 from the one below. Centring on the computed midpoint was
+    still a point out, because `drawRuling` snaps each rule to the pixel grid and
+    the snap moves it; both now share `Style.ruleY`. Measured on a render, the
+    band centre and the rule midpoint agree to 0.00pt.
+
+    *Fixed.* A folder could not be recapitalised: the vault is
+    case-insensitive, so renaming "notes" to "Notes" found "Notes" already
+    present — itself — and settled on "Notes 2". `Style.applyFont` wrote
+    attributes from inside its own `enumerateAttribute` walk, which can merge
+    the runs being enumerated. And `applyTheme` ran `didChangeText` straight
+    through to a `@Published` write while inside a SwiftUI update pass.
+
+    *Changed on purpose.* Deleting a folder now deletes the notes in it, rather
+    than sliding them back to unfiled — the same deal `delete(_:)` already
+    offers for one note, with no trash and no undo. Folder names are shown as
+    typed instead of forced to uppercase, which is what made recapitalising
+    them worth fixing.
+
+    *Consistency.* `houseFont` replaced `.font(.custom("Courier", size:))` at
+    every call site, so the family chosen in settings reaches the chrome and
+    the stickies and not only the page — it used to restyle the note and leave
+    the panel, the palette, the folder names and onboarding in Courier. The
+    three settings cards take the notes panel's paper; they were the last flat
+    raised surfaces in the app. Three hand-drawn placeholder texts became
+    `HouseField`'s own. Four copies of the load-a-document sequence became one,
+    the vault picker exists once instead of twice, and the settings rows are one
+    builder instead of three near-identical blocks.
+
 ## Minor updates & polish
 
 - **New folder without the context menu**: the folder grid ends with a `+`

@@ -50,10 +50,15 @@ for key in CFBundleName CFBundleDisplayName CFBundleExecutable; do
 done
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" \
   "$APP/Contents/Info.plist" > /dev/null
-for asset in Flourish.png StickyFlower.png FolderSprig.png OnboardingLogo.png \
-             StickyFlourish.png FolderFlourish.png; do
-  [ -f "$asset" ] && cp "$asset" "$APP/Contents/Resources/$asset"
-done
+# There is no loop of individual PNGs here any more, and no PNGs at the repo
+# root to feed one. The rebuild replaced every static mark with the stop-motion
+# flourish below, so Flourish, StickyFlower, FolderSprig, OnboardingLogo,
+# StickyFlourish and FolderFlourish were all still being copied into every
+# bundle with nothing left in the app that drew them. The two remaining kinds of
+# art ship as *directories* — Textures and FlourishFrames — which is also what
+# stops this failing silently: a per-asset list does nothing when someone adds a
+# file and forgets to name it, and on this branch drawing nothing and drawing a
+# very subtle grain look identical.
 
 # The icon is copied separately because this branch ships a different one. It
 # still lands as AppIcon.icns, which is what CFBundleIconFile in Info.plist

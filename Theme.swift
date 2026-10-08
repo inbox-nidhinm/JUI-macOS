@@ -20,18 +20,26 @@ struct Theme: Identifiable, Equatable {
     let id: String
     let label: String
 
+    // Every token here is drawn by something. Three used to sit alongside them
+    // and no longer do, because what they described stopped existing:
+    //
+    // - `divider`, a colour a step darker than the sheet, which inverted the
+    //   moment the panels took their paper and became `panelDividerColor` — a
+    //   *tone*, so it darkens whatever it lands on in all six themes.
+    // - `rule`, for the horizontal rules that are gone from the editor. The
+    //   ruled page draws itself with `Style.ruleTone`, for the same reason.
+    // - `flourishHover`, from the treatment where hovering *lifted* the corner
+    //   mark. It has to deepen it now, so the hover tint is panel taken a step
+    //   toward the ink and is computed rather than stored.
     let sheet: NSColor          // the page
     let panel: NSColor          // popovers, palette, text selection, traffic lights
     let folderBase: NSColor     // folder card at rest
-    let divider: NSColor        // hairlines
     let envelope: NSColor       // onboarding envelope
     let letterSheet: NSColor    // onboarding letter
     let ink: NSColor            // every word in the app
     let sticky: NSColor         // sticky notes, selection icon — the anchor tone
     let openDot: NSColor        // the dot marking the open note; the picker's ring
-    let rule: NSColor           // horizontal rules
-    let flourish: NSColor       // corner flourish at rest
-    let flourishHover: NSColor  // corner flourish hovered
+    let flourish: NSColor       // the corner flourish, and onboarding's
 
     static func == (a: Theme, b: Theme) -> Bool { a.id == b.id }
 }
@@ -47,44 +55,44 @@ enum Themes {
     static let cream = Theme(
         id: "cream", label: "cream",
         sheet: rgb(0xFDF0D9), panel: rgb(0xECDBBE), folderBase: rgb(0xF3E4CA),
-        divider: rgb(0xE6D4B5), envelope: rgb(0xEBCEA3), letterSheet: rgb(0xFFFAF3),
+        envelope: rgb(0xEBCEA3), letterSheet: rgb(0xFFFAF3),
         ink: rgb(0x71390D), sticky: rgb(0xF7C82D), openDot: rgb(0xA88D34),
-        rule: rgb(0xAD9E84), flourish: rgb(0xF2E3C9), flourishHover: rgb(0xF2DEBA))
+        flourish: rgb(0xF2E3C9))
 
     static let mint = Theme(
         id: "mint", label: "mint",
         sheet: rgb(0xDDF9EF), panel: rgb(0xC3E7DA), folderBase: rgb(0xCEEFE3),
-        divider: rgb(0xBAE1D3), envelope: rgb(0xAAE4CE), letterSheet: rgb(0xF4FEFA),
+        envelope: rgb(0xAAE4CE), letterSheet: rgb(0xF4FEFA),
         ink: rgb(0x176742), sticky: rgb(0x61E7C1), openDot: rgb(0x409C82),
-        rule: rgb(0x88A99D), flourish: rgb(0xCDEEE2), flourishHover: rgb(0xC0ECDD))
+        flourish: rgb(0xCDEEE2))
 
     static let sky = Theme(
         id: "sky", label: "sky",
         sheet: rgb(0xD9F1FD), panel: rgb(0xBEDCEC), folderBase: rgb(0xCAE5F3),
-        divider: rgb(0xB5D5E6), envelope: rgb(0xA3D4EB), letterSheet: rgb(0xF3FBFF),
+        envelope: rgb(0xA3D4EB), letterSheet: rgb(0xF3FBFF),
         ink: rgb(0x0D5A71), sticky: rgb(0x65BFFF), openDot: rgb(0x3478A8),
-        rule: rgb(0x849FAD), flourish: rgb(0xC9E4F2), flourishHover: rgb(0xBADEF2))
+        flourish: rgb(0xC9E4F2))
 
     static let coral = Theme(
         id: "coral", label: "coral",
         sheet: rgb(0xFDE3D9), panel: rgb(0xECCBBE), folderBase: rgb(0xF3D6CA),
-        divider: rgb(0xE6C3B5), envelope: rgb(0xEBB6A3), letterSheet: rgb(0xFFF6F3),
+        envelope: rgb(0xEBB6A3), letterSheet: rgb(0xFFF6F3),
         ink: rgb(0x711F0D), sticky: rgb(0xFF985E), openDot: rgb(0xA85E34),
-        rule: rgb(0xAD9084), flourish: rgb(0xF2D5C9), flourishHover: rgb(0xF2CABA))
+        flourish: rgb(0xF2D5C9))
 
     static let lilac = Theme(
         id: "lilac", label: "lilac",
         sheet: rgb(0xE6D9FD), panel: rgb(0xCFBEEC), folderBase: rgb(0xD9CAF3),
-        divider: rgb(0xC7B5E6), envelope: rgb(0xBCA3EB), letterSheet: rgb(0xF7F3FF),
+        envelope: rgb(0xBCA3EB), letterSheet: rgb(0xF7F3FF),
         ink: rgb(0x270D71), sticky: rgb(0xC18FFF), openDot: rgb(0x6834A8),
-        rule: rgb(0x9384AD), flourish: rgb(0xD8C9F2), flourishHover: rgb(0xCFBAF2))
+        flourish: rgb(0xD8C9F2))
 
     static let orchid = Theme(
         id: "orchid", label: "orchid",
         sheet: rgb(0xFDD9F8), panel: rgb(0xECBEE6), folderBase: rgb(0xF3CAED),
-        divider: rgb(0xE6B5DF), envelope: rgb(0xEBA3E2), letterSheet: rgb(0xFFF3FE),
+        envelope: rgb(0xEBA3E2), letterSheet: rgb(0xFFF3FE),
         ink: rgb(0x710D6E), sticky: rgb(0xFF87E5), openDot: rgb(0xA8348F),
-        rule: rgb(0xAD84A7), flourish: rgb(0xF2C9EC), flourishHover: rgb(0xF2BAEA))
+        flourish: rgb(0xF2C9EC))
 
     // order is the order of the dots, in both onboarding and settings
     static let all: [Theme] = [cream, mint, sky, coral, lilac, orchid]

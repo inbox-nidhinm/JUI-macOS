@@ -15,12 +15,6 @@ import AppKit
 var envelopeColor: Color { Color(nsColor: Style.theme.envelope) }
 var letterColor: Color { Color(nsColor: Style.theme.letterSheet) }
 
-let onboardingLogo: NSImage? = {
-    guard let url = Bundle.main.url(forResource: "OnboardingLogo", withExtension: "png")
-    else { return nil }
-    return NSImage(contentsOf: url)
-}()
-
 // Design values, verbatim from the Figma frames.
 private enum D {
     static let envW: CGFloat = 915
@@ -39,9 +33,10 @@ private enum D {
     static let contentGap: CGFloat = 32
     static let primaryY: CGFloat = 457
     static let backY: CGFloat = 531
-    static let controlH: CGFloat = 55
 
-    static let radius: CGFloat = 16 // design's pill roundness, as a ratio of height
+    // The design's own control height and pill radius are not here: the frames
+    // were drawn on a 1600px canvas and their 55/16 shouted next to the editor,
+    // so the controls take the app's scale from `T` instead. See the note there.
 
     static let sprigW: CGFloat = 105.877
     static let sprigH: CGFloat = 158.092
@@ -263,34 +258,27 @@ struct OnboardingView: View {
 
     private func title(_ text: String, _ s: CGFloat) -> some View {
         Text(text)
-            .font(.custom("Courier", size: type(T.title, s)))
+            .font(houseFont(type(T.title, s)))
             .foregroundStyle(brownInk)
             .multilineTextAlignment(.center)
             .lineSpacing(type(4, s))
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    // macOS ignores TextField prompt styling, so the placeholder is drawn by
-    // hand — same trick as the search palette.
     private func nameField(_ s: CGFloat) -> some View {
-        ZStack {
-            if name.isEmpty {
-                Text("your name")
-                    .font(.custom("Courier", size: type(T.control, s)))
-                    .foregroundStyle(inkFaint)
-                    .allowsHitTesting(false)
-            }
-            // HouseField rather than SwiftUI's TextField so selections use the
-            // editor's pale cream instead of the tint's near-black ink
-            HouseField(
-                text: $name,
-                size: type(T.control, s),
-                centered: true,
-                focused: nameFocused,
-                onSubmit: { if canAdvance { advance() } })
-                .frame(height: type(T.control, s) + 4)
-        }
-        .padding(.horizontal, type(T.controlPadH, s))
+        // HouseField rather than SwiftUI's TextField so selections use the
+        // editor's pale cream instead of the tint's near-black ink — and so the
+        // placeholder is the field's own, centred with the text it stands in for
+        // rather than a second Text drawn behind it.
+        HouseField(
+            text: $name,
+            size: type(T.control, s),
+            centered: true,
+            placeholder: "your name",
+            focused: nameFocused,
+            onSubmit: { if canAdvance { advance() } })
+            .frame(height: type(T.control, s) + 4)
+            .padding(.horizontal, type(T.controlPadH, s))
         .frame(width: D.contentW * s, height: type(T.controlH, s))
         .background(
             RoundedRectangle(cornerRadius: type(T.controlRadius, s)).fill(sheetColor))
@@ -300,7 +288,7 @@ struct OnboardingView: View {
     private func vaultPill(_ s: CGFloat) -> some View {
         Button(action: pickVault) {
             Text(vaultDisplay)
-                .font(.custom("Courier", size: type(T.control, s)))
+                .font(houseFont(type(T.control, s)))
                 .foregroundStyle(brownInk)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -329,7 +317,7 @@ struct OnboardingView: View {
     private func backButton(_ s: CGFloat) -> some View {
         Button(action: goBack) {
             Text("back")
-                .font(.custom("Courier", size: type(T.back, s)))
+                .font(houseFont(type(T.back, s)))
                 .foregroundStyle(inkMuted)
                 .padding(.vertical, type(6, s))
                 .contentShape(Rectangle())
@@ -444,15 +432,10 @@ struct OnboardingView: View {
         DispatchQueue.main.async { nameFocused = (next == .name) }
     }
 
+    // Remembered rather than acted on: the vault only moves once the flow is
+    // finished, so backing out of onboarding leaves the notes where they were.
     private func pickVault() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.canCreateDirectories = true
-        panel.directoryURL = chosenVault ?? store.dir
-        panel.prompt = "Use as Vault"
-        panel.message = "Choose the folder where notes are stored"
-        if panel.runModal() == .OK, let url = panel.url {
+        if let url = chooseVaultFolder(startingAt: chosenVault ?? store.dir) {
             chosenVault = url
         }
     }
@@ -501,7 +484,7 @@ struct OnboardingPill: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.custom("Courier", size: fontSize))
+                .font(houseFont(fontSize))
                 .foregroundStyle(enabled ? brownInk : inkFaint)
                 .padding(.horizontal, padH)
                 .frame(height: height)

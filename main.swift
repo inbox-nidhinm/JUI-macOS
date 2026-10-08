@@ -8,7 +8,6 @@ var sheetColor: Color { Color(nsColor: Style.theme.sheet) }
 var panelColor: Color { Color(nsColor: Style.theme.panel) }
 var openDotColor: Color { Color(nsColor: Style.theme.openDot) }
 var flourishColor: Color { Color(nsColor: Style.theme.flourish) }
-var flourishHoverColor: Color { Color(nsColor: Style.theme.flourishHover) }
 
 // The corner flourish's two states.
 //
@@ -31,15 +30,25 @@ var inkStrong: Color { brownInk.opacity(0.85) } // panel rows, settings values, 
 var inkMuted: Color { brownInk.opacity(0.55) } // labels, snippets, secondary rows
 var inkFaint: Color { brownInk.opacity(0.4) } // placeholders, empty states, icons, disabled
 
-var dividerColor: Color { Color(nsColor: Style.theme.divider) }
+// Type, handled the way colour is: one function every call site reads through,
+// so the family chosen in settings reaches the chrome and not only the page.
+//
+// This was `.font(.custom("Courier", size:))` written out at every call site,
+// which meant the picker restyled the note and left every panel row, search
+// result, folder name and onboarding title in Courier. Worst inside the ⌘K
+// field, where the typed text went through `HouseField` and followed the
+// choice while the placeholder drawn behind it stayed Courier — two families
+// on one line. The scale is unchanged: 10 / 11 / 12 / 13 / 14 / 16.
+func houseFont(_ size: CGFloat) -> Font { Font(Style.font(size) as CTFont) }
 
 // The hairline *inside* a papered surface, as a tone rather than a colour —
 // the same reasoning as `Style.ruleTone`.
 //
-// `divider` above is a colour chosen to sit a step darker than the sheet, and
-// it stopped working the moment the panels took their paper: at 93% the folder
-// pane goes to #D0C1A7, which is darker than the #E6D4B5 hairline, so the
-// divider inverted and read as a pale scratch across the card.
+// It replaced a `divider` *colour* chosen to sit a step darker than the sheet,
+// which stopped working the moment the panels took their paper: at 93% the
+// folder pane goes to #D0C1A7, which is darker than the #E6D4B5 hairline, so
+// the divider inverted and read as a pale scratch across the card. Nothing
+// draws a fixed divider colour any more, so the token is gone from `Theme`.
 //
 // Black at 12% over a base is arithmetically a multiply by 0.88 — no blend mode
 // needed, since a black source at alpha `a` composites to exactly `base × (1−a)`.
@@ -99,12 +108,21 @@ struct AnimatedFlourish: View {
 
     static func frames(_ set: FlourishSet) -> [NSImage] {
         if let hit = cache[set.rawValue] { return hit }
-        let loaded = (1...30).compactMap { n -> NSImage? in
-            Bundle.main.url(forResource: String(format: "frame-%02d", n),
-                            withExtension: "png",
-                            subdirectory: "FlourishFrames/" + set.rawValue)
-                .flatMap { NSImage(contentsOf: $0) }
-        }
+        // Counted off what actually shipped rather than written down here. The
+        // aspect, the sequence's duration and the onboarding beat that waits
+        // for it are all derived from this array, and a hardcoded range made
+        // that derivation a fiction: a re-export of a different length would
+        // have been rasterised and shipped in full, then played thirty frames
+        // of and stopped. Sorted by the number in the name, not the string, so
+        // a hundred-frame export doesn't order 100 before 11.
+        let urls = Bundle.main.urls(
+            forResourcesWithExtension: "png",
+            subdirectory: "FlourishFrames/" + set.rawValue) ?? []
+        let loaded = urls
+            .map { ($0, Int($0.deletingPathExtension().lastPathComponent
+                .drop { !$0.isNumber }) ?? 0) }
+            .sorted { $0.1 < $1.1 }
+            .compactMap { NSImage(contentsOf: $0.0) }
         cache[set.rawValue] = loaded
         return loaded
     }
@@ -158,28 +176,22 @@ struct AnimatedFlourish: View {
     }
 }
 
-// botanical sprig sitting atop each folder box
-let folderSprigImage: NSImage? = {
-    guard let url = Bundle.main.url(forResource: "FolderSprig", withExtension: "png")
-    else { return nil }
-    return NSImage(contentsOf: url)
-}()
-// The system's folder flourish — a watermark filling most of the tile from the
-// top edge, not the small corner sprig it replaces. Rasterised from the file's
-// vector with its rotation and flip baked in.
-let folderFlourishImage: NSImage? = {
-    guard let url = Bundle.main.url(forResource: "FolderFlourish", withExtension: "png")
-    else { return nil }
-    return NSImage(contentsOf: url)
-}()
 var folderBaseColor: Color { Color(nsColor: Style.theme.folderBase) }
-let folderSprigHeight: CGFloat = 32
-let folderSprigWidth: CGFloat = 32 * (181.0 / 271.0) // keep the artwork's aspect
-let folderSprigGap: CGFloat = 14 // breathing room between sprig and name
+
+// The air a folder tile keeps above its name.
+//
+// It used to be occupied: a small botanical sprig sat there in the flow, as a
+// PNG. In the system the mark is a watermark behind the whole tile instead, so
+// it moved to the background and these hold the space it left — which is why
+// the numbers are the sprig's and not something rounder. The tile's height is
+// computed from them, so they set the grid the folder grid is laid out on.
+let folderMarkHeight: CGFloat = 32
+let folderMarkWidth: CGFloat = 32 * (181.0 / 271.0)
+let folderMarkGap: CGFloat = 14 // breathing room between the mark and the name
 let folderTitleHeight: CGFloat = 16
 let folderCellPadding: CGFloat = 9
 let folderCellHeight: CGFloat =
-    folderSprigHeight + folderSprigGap + folderTitleHeight + folderCellPadding * 2
+    folderMarkHeight + folderMarkGap + folderTitleHeight + folderCellPadding * 2
 
 enum Style {
     // The one piece of mutable global state the colours hang off. Set on launch
@@ -193,24 +205,44 @@ enum Style {
     static let sideMargin: CGFloat = 200
     // user-selectable via the flourish settings page
     static var fontFamily: String = UserDefaults.standard.string(forKey: "fontFamily") ?? "Courier"
-    static var baseFont: NSFont {
-        NSFontManager.shared.font(withFamily: fontFamily, traits: [], weight: 5, size: 16)
-            ?? NSFont(name: "Courier", size: 16)
-            ?? .monospacedSystemFont(ofSize: 16, weight: .regular)
+
+    // The body size, and the top of the type scale — see `houseFont`.
+    static let baseSize: CGFloat = 16
+
+    static var baseFont: NSFont { font(baseSize) }
+
+    /// The chosen family at a given size, with the same fallback chain
+    /// everywhere. Resolved through `NSFontManager` because `fontFamily` is a
+    /// *family* name and `NSFont(name:)` wants a font's own name — they happen
+    /// to coincide for Courier and don't for most of what the picker offers.
+    static func font(_ size: CGFloat) -> NSFont {
+        NSFontManager.shared.font(withFamily: fontFamily, traits: [], weight: 5, size: size)
+            ?? NSFont(name: fontFamily, size: size)
+            ?? NSFont(name: "Courier", size: size)
+            ?? .monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
     // force every font run to the chosen family/size, keeping italic/bold traits
+    //
+    // Collected first and applied after, rather than written from inside the
+    // walk. Adding an attribute can merge a run with its neighbour, which
+    // reshapes the very ranges being enumerated — the same reason
+    // `normalizeFonts` builds a list of fixes instead of editing in place.
     static func applyFont(to text: NSMutableAttributedString) {
         let manager = NSFontManager.shared
         let full = NSRange(location: 0, length: text.length)
+        var fixes: [(NSFont, NSRange)] = []
         text.enumerateAttribute(.font, in: full) { value, range, _ in
             let font = value as? NSFont ?? baseFont
-            if font.familyName != fontFamily || font.pointSize != 16 {
-                var fixed = manager.convert(font, toFamily: fontFamily)
-                fixed = manager.convert(fixed, toSize: 16)
-                text.addAttribute(.font, value: fixed, range: range)
-            }
+            guard font.familyName != fontFamily || font.pointSize != baseSize else { return }
+            var fixed = manager.convert(font, toFamily: fontFamily)
+            fixed = manager.convert(fixed, toSize: baseSize)
+            fixes.append((fixed, range))
         }
+        guard !fixes.isEmpty else { return }
+        text.beginEditing()
+        for (font, range) in fixes { text.addAttribute(.font, value: font, range: range) }
+        text.endEditing()
     }
     // MARK: Ruled paper
 
@@ -243,13 +275,50 @@ enum Style {
     // The type's own height, without the leading that follows it.
     static var lineHeight: CGFloat { NSLayoutManager().defaultLineHeight(for: baseFont) }
 
-    // How far a selection reaches past the glyphs it covers. AppKit hands the
-    // whole line fragment to the selection fill, and a fragment is
-    // [glyphs][leading] — so on a ruled page, where the leading is most of the
-    // band, the highlight trailed a slab of colour under every line and ran
-    // down to the next one. The selection marks the words; this is the air
-    // around them.
-    static let selectionPadding: CGFloat = 8
+    // MARK: The ink box
+    //
+    // Where the glyphs actually sit inside a line fragment, and how tall they
+    // are. AppKit puts the baseline `defaultBaselineOffset` down from the
+    // fragment's top; the ink runs from there up by the ascender and down by
+    // the descender, and everything else in the fragment is leading.
+    //
+    // Anything that marks the *words* rather than the line — the selection, the
+    // caret — has to measure from here. It cannot measure from the rect AppKit
+    // hands it, because that rect's height is not one thing: for the same 16pt
+    // type it arrives 19pt tall on the last line of the document, 48 on a line
+    // with another line under it (the line plus `lineSpacing`), and 96 on a
+    // line that ends a paragraph (plus `paragraphSpacing`). Only its *origin*
+    // is dependable — it is the fragment's top in all three cases.
+    static var inkOffset: CGFloat {
+        NSLayoutManager().defaultBaselineOffset(for: baseFont) - baseFont.ascender
+    }
+    static var inkHeight: CGFloat { baseFont.ascender - baseFont.descender }
+
+    /// Where a rule actually lands, given the y it would ideally sit at.
+    ///
+    /// `drawRuling` snaps to the pixel so a hairline doesn't smear across two,
+    /// and that snap moves the rule — by up to a point, in whichever direction
+    /// the fraction falls. Anything positioning itself *against* the ruling has
+    /// to snap the same way, or it will be measuring to where the rule was
+    /// computed rather than to where it was drawn.
+    static func ruleY(_ y: CGFloat) -> CGFloat { y.rounded() + 0.5 }
+
+    /// The midpoint between the two rules bracketing a line, as drawn.
+    static func ruledCentre(forLineTop top: CGFloat) -> CGFloat {
+        let above = ruleY(top - lineSpacing / 2)
+        return (above + ruleY(top - lineSpacing / 2 + linePitch)) / 2
+    }
+
+    // How far a selection reaches past the ink it covers, top and bottom.
+    //
+    // The selection marks the words; this is the air around them. Taken from
+    // the original app, where the highlight was simply the whole line fragment
+    // and the fragment was barely taller than the type — which worked out to
+    // about 4.5pt of air on a 16pt ink box. At 8 the band read as a slab laid
+    // over the line rather than as words being marked, which is not what a
+    // wider line should buy: the ruling opens the page up, and the highlight
+    // should stay the size of the writing.
+    static let selectionPadding: CGFloat = 5
 
     // The selection in the note editor is a *tone*, not a colour — the same
     // reasoning as `ruleTone` and the panel divider.
@@ -466,9 +535,12 @@ final class NotesStore: ObservableObject {
     @Published private(set) var wordCount = 0
 
     private func updateWordCount() {
+        // The bullet is furniture, not a word. Runs of "─" were filtered here
+        // too, back when a horizontal rule was stored as one; nothing writes one
+        // any more, and the marker that replaced it is a no-break space, which
+        // `isWhitespace` already splits on.
         let tokens = attr.string.split { $0.isWhitespace || $0.isNewline }
-        // bullets and rule markers aren't words
-        wordCount = tokens.filter { $0 != "•" && !$0.allSatisfy { $0 == "─" } }.count
+        wordCount = tokens.filter { $0 != "•" }.count
     }
 
     func textChanged(_ new: NSAttributedString) {
@@ -567,7 +639,19 @@ final class NotesStore: ObservableObject {
 
     // MARK: Search (⌘K)
 
-    @Published var searchShown = false
+    @Published var searchShown = false {
+        didSet {
+            guard !searchShown, oldValue else { return }
+            // The cache is every note's text held in memory. Dropped a beat
+            // after the palette closes rather than with it: the rows are still
+            // being laid out while it fades out over 0.6s, and clearing on the
+            // instant took the snippets out of them on the way past.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let self, !self.searchShown else { return }
+                self.searchCache.removeAll()
+            }
+        }
+    }
     var pendingReveal: NSRange? // consumed by the text view after a reveal()
     private var searchCache: [String: String] = [:]
 
@@ -603,11 +687,22 @@ final class NotesStore: ObservableObject {
         let clean = sanitizeFolderName(newName)
         guard !clean.isEmpty, clean != name else { return name }
         let fm = FileManager.default
+        // Skip the uniquing loop when the only thing changing is case.
+        //
+        // The vault sits on a case-insensitive filesystem, so `fileExists` for
+        // "Notes" is true while the folder is still called "notes" — the folder
+        // being renamed answers for the name it is being renamed *to*. The loop
+        // read that as a collision and settled on "Notes 2", so fixing a
+        // folder's capitalisation was the one rename that could not be done.
+        // A same-name-different-case move is exactly what the filesystem
+        // handles for us.
         var candidate = clean
-        var counter = 2
-        while fm.fileExists(atPath: dir.appendingPathComponent(candidate).path) {
-            candidate = "\(clean) \(counter)"
-            counter += 1
+        if clean.lowercased() != name.lowercased() {
+            var counter = 2
+            while fm.fileExists(atPath: dir.appendingPathComponent(candidate).path) {
+                candidate = "\(clean) \(counter)"
+                counter += 1
+            }
         }
         do {
             try fm.moveItem(
@@ -619,21 +714,25 @@ final class NotesStore: ObservableObject {
         return candidate
     }
 
-    // Deleting a folder never deletes writing: its notes slide back to unfiled.
+    // Deleting a folder deletes what is in it. There is no trash and no undo,
+    // which is the same deal `delete(_:)` offers for a single note.
+    //
+    // The whole directory goes, not a filtered sweep of it: a leftover file of
+    // some other kind would have made `removeItem` fail and left a ghost folder
+    // in the panel that nothing could get rid of.
     func deleteFolder(_ name: String) {
         let fm = FileManager.default
         let folderURL = dir.appendingPathComponent(name, isDirectory: true)
-        if let files = try? fm.contentsOfDirectory(at: folderURL, includingPropertiesForKeys: nil) {
-            for file in files where ["rtf", "txt", "json"].contains(file.pathExtension) {
-                let dest = dir.appendingPathComponent(file.lastPathComponent)
-                if !fm.fileExists(atPath: dest.path) {
-                    try? fm.moveItem(at: file, to: dest)
-                }
-            }
-        }
+        // The open note may be one of the ones about to go. Cancel its pending
+        // save first, or the debounce fires afterwards and writes the file
+        // straight back — into a directory that no longer exists, so the note
+        // is lost and the folder half-returns.
+        let losingCurrent = folderOf(currentID) == name
+        if losingCurrent { saveWork?.cancel() }
         try? fm.removeItem(at: folderURL)
         if currentFolder == name { currentFolder = nil }
         refreshList()
+        if losingCurrent { openMostRecentOrBlank() }
     }
 
     func moveNote(_ id: String, to folder: String?) {
@@ -754,16 +853,7 @@ final class NotesStore: ObservableObject {
     func reveal(_ id: String, query: String) {
         searchShown = false
         saveNow()
-        let folder = notes.first(where: { $0.id == id })?.folder
-        currentID = id
-        currentFolder = folder
-        attr = loadAttr(id, in: folder)
-        stickies = loadStickies(id, in: folder)
-        updateWordCount()
-        let q = query.trimmingCharacters(in: .whitespaces)
-        let range = (attr.string as NSString).range(of: q, options: .caseInsensitive)
-        pendingReveal = (!q.isEmpty && range.location != NSNotFound) ? range : nil
-        docVersion += 1
+        load(id, in: notes.first(where: { $0.id == id })?.folder, revealing: query)
     }
 
     private func plainTextForNote(_ id: String) -> String {
@@ -773,11 +863,25 @@ final class NotesStore: ObservableObject {
         return plainText(of: txtURL(id, in: folder))
     }
 
+    // A note's title is derived from its first line, so working it out means
+    // opening the file and parsing the RTF. Cached against the modification
+    // date it was read at, so a rescan only parses what has actually changed.
+    //
+    // This is load-bearing rather than an optimisation for its own sake:
+    // `saveNow` ends in `refreshList`, and saves are debounced on typing, so
+    // every pause of 300ms re-read and re-parsed *every note in the vault*.
+    // The cost grew with the vault and landed on the one path that has to stay
+    // cheap. Now a save re-parses the one file it just wrote.
+    private var titleCache: [String: (modified: Date, title: String)] = [:]
+
     func refreshList() {
         let fm = FileManager.default
         var seen = Set<String>()
         var metas: [NoteMeta] = []
         var folderNames: [String] = []
+        // Rebuilt rather than updated in place, so a note that has been deleted
+        // or moved doesn't leave its entry behind for the life of the process.
+        var freshTitles: [String: (modified: Date, title: String)] = [:]
 
         func scanFiles(in directory: URL, folder: String?) {
             let files = (try? fm.contentsOfDirectory(
@@ -789,9 +893,15 @@ final class NotesStore: ObservableObject {
                 guard seen.insert(id).inserted else { continue }
                 let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
                     .contentModificationDate ?? .distantPast
+                let title: String
+                if let hit = titleCache[url.path], hit.modified == modified {
+                    title = hit.title
+                } else {
+                    title = Self.title(for: plainText(of: url))
+                }
+                freshTitles[url.path] = (modified, title)
                 metas.append(NoteMeta(
-                    id: id, title: Self.title(for: plainText(of: url)),
-                    modified: modified, folder: folder))
+                    id: id, title: title, modified: modified, folder: folder))
             }
         }
 
@@ -806,6 +916,7 @@ final class NotesStore: ObservableObject {
         }
         scanFiles(in: dir, folder: nil)
 
+        titleCache = freshTitles
         folders = folderNames.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
         notes = metas.sorted { $0.modified > $1.modified }
     }
@@ -888,53 +999,70 @@ final class NotesStore: ObservableObject {
         return NSAttributedString()
     }
 
-    func open(_ id: String) {
-        saveNow()
-        let folder = notes.first(where: { $0.id == id })?.folder
+    // MARK: Getting a document into the editor
+    //
+    // Every route in goes through `load` or `loadBlank`, so none of them can
+    // forget a step. There were four copies of this sequence — open, reveal,
+    // delete-the-open-note, new — and `docVersion` has to be bumped last, after
+    // `pendingReveal` is set, or the text view reloads before it can read it.
+
+    private func load(_ id: String, in folder: String?, revealing query: String? = nil) {
         currentID = id
         currentFolder = folder
         attr = loadAttr(id, in: folder)
         stickies = loadStickies(id, in: folder)
         updateWordCount()
+        if let query {
+            let q = query.trimmingCharacters(in: .whitespaces)
+            let range = (attr.string as NSString).range(of: q, options: .caseInsensitive)
+            pendingReveal = (!q.isEmpty && range.location != NSNotFound) ? range : nil
+        }
         docVersion += 1
     }
 
+    /// A blank page. Nothing reaches disk until something is typed into it.
+    private func loadBlank(in folder: String?) {
+        currentID = UUID().uuidString
+        currentFolder = folder
+        attr = NSAttributedString()
+        stickies = []
+        updateWordCount()
+        docVersion += 1
+    }
+
+    /// Whatever was written most recently, or a blank page if the vault is now
+    /// empty — where the editor lands when the open note is deleted under it.
+    private func openMostRecentOrBlank() {
+        if let latest = notes.first {
+            load(latest.id, in: latest.folder)
+        } else {
+            loadBlank(in: nil)
+        }
+    }
+
+    func open(_ id: String) {
+        saveNow()
+        load(id, in: notes.first(where: { $0.id == id })?.folder)
+    }
+
     func delete(_ id: String) {
-        if id == currentID { saveWork?.cancel() } // a pending save would resurrect the file
+        let losingCurrent = id == currentID
+        if losingCurrent { saveWork?.cancel() } // a pending save would resurrect the file
         let folder = folderOf(id)
         let fm = FileManager.default
         try? fm.removeItem(at: rtfURL(id, in: folder))
         try? fm.removeItem(at: txtURL(id, in: folder))
         try? fm.removeItem(at: stickiesURL(id, in: folder))
         refreshList()
-        if id == currentID {
-            if let latest = notes.first {
-                currentID = latest.id
-                currentFolder = latest.folder
-                attr = loadAttr(latest.id, in: latest.folder)
-                stickies = loadStickies(latest.id, in: latest.folder)
-            } else {
-                currentID = UUID().uuidString
-                currentFolder = nil
-                attr = NSAttributedString()
-                stickies = []
-            }
-            updateWordCount()
-            docVersion += 1
-        }
+        if losingCurrent { openMostRecentOrBlank() }
     }
 
     func newNote() {
         hiddenShown = false
         saveNow()
-        currentID = UUID().uuidString
         // land in the panel's current location if it's open, else stay in the
         // open note's folder
-        if let context = panelContext { currentFolder = context }
-        attr = NSAttributedString()
-        stickies = []
-        updateWordCount()
-        docVersion += 1
+        loadBlank(in: panelContext ?? currentFolder)
     }
 
     private func rtfURL(_ id: String, in folder: String?) -> URL {
@@ -1033,11 +1161,15 @@ final class SmoothCaret {
         // AppKit's rect for the insertion point is the whole line fragment, and
         // a fragment is [glyphs][leading]. On a 48pt band that drew a 48pt
         // caret — most of it hanging below the letters it sits among, reaching
-        // down toward the next line. Trimmed to the type's own height, taken
-        // from the fragment's top, which is where the glyphs are.
-        let height = min(rect.height, Style.lineHeight + Style.caretOvershoot * 2)
-        rect.origin.y -= Style.caretOvershoot
-        rect.size = NSSize(width: 2, height: height)
+        // down toward the next line.
+        //
+        // Sized off the ink box rather than off that rect, for the reason
+        // `Style.inkOffset` gives: the rect's height is 19pt on the last line of
+        // the document and 48 elsewhere, so the old `min` against a fixed clamp
+        // let the caret change height from line to line and sit a little high in
+        // both. Now it is one height everywhere, centred on the letters.
+        rect.origin.y += Style.inkOffset - Style.caretOvershoot
+        rect.size = NSSize(width: 2, height: Style.inkHeight + Style.caretOvershoot * 2)
         layer.isHidden = false
         CATransaction.begin()
         if animated {
@@ -1115,6 +1247,12 @@ final class StickyTextView: NSTextView {
         insertionPointColor = Style.ink
         smoothCaret.applyTheme()
     }
+
+    func applyFont() { font = Style.font(Self.textSize) }
+
+    // A stamp is a small surface, so its writing sits a step down the scale
+    // from the page's — same relationship whatever family is chosen.
+    static let textSize: CGFloat = 13
 }
 
 final class StickyView: NSView, NSTextViewDelegate {
@@ -1132,16 +1270,28 @@ final class StickyView: NSView, NSTextViewDelegate {
     // baked into a copy — sourceAtop over the source directly would catch the
     // sticky's own background, which is already opaque behind it.
     //
-    // Cached per theme *and* frame. Thirty frames across six themes is more
-    // entries than the old single image, but they are built only as they are
-    // reached, so a sticky that never animates costs exactly one.
-    private static var flowerCache: [String: NSImage] = [:]
+    // Cached per frame, for the current theme only — and built only as each
+    // frame is reached, so a sticky that never animates still costs exactly one.
+    //
+    // Held to one theme because every entry is a whole decoded bitmap rather
+    // than a reference to the source: the tint has to be baked in. Thirty
+    // frames of a ~366×405 stamp is around 18MB, and keying by theme *and*
+    // frame meant changing mood *added* a set instead of replacing one — six
+    // moods and one animated sticky reached about 106MB, none of it reachable
+    // again. Dropping the lot on a theme change costs nothing visible: the same
+    // image is rebuilt the same way from the same frame, and the only tint ever
+    // asked for is the one currently in force.
+    private static var flowerCache: [Int: NSImage] = [:]
+    private static var flowerCacheTheme: String?
 
     private static func flower(_ index: Int, for theme: Theme) -> NSImage? {
         let all = frames
         guard all.indices.contains(index) else { return nil }
-        let key = theme.id + "-" + String(index)
-        if let hit = flowerCache[key] { return hit }
+        if flowerCacheTheme != theme.id {
+            flowerCache.removeAll()
+            flowerCacheTheme = theme.id
+        }
+        if let hit = flowerCache[index] { return hit }
         let src = all[index]
         let out = NSImage(size: src.size)
         out.lockFocus()
@@ -1151,7 +1301,7 @@ final class StickyView: NSView, NSTextViewDelegate {
         theme.panel.set()
         NSRect(origin: .zero, size: src.size).fill(using: .sourceAtop)
         out.unlockFocus()
-        flowerCache[key] = out
+        flowerCache[index] = out
         return out
     }
 
@@ -1204,7 +1354,7 @@ final class StickyView: NSView, NSTextViewDelegate {
         super.init(frame: .zero)
         if drawsFlourish { startFlourish() }
         noteView.isRichText = false
-        noteView.font = NSFont(name: "Courier", size: 13)
+        noteView.font = Style.font(StickyTextView.textSize)
         noteView.textColor = Style.ink
         noteView.insertionPointColor = Style.ink
         noteView.drawsBackground = false
@@ -1316,6 +1466,13 @@ final class StickyView: NSView, NSTextViewDelegate {
     func applyTheme() {
         noteView.applyTheme()
         needsDisplay = true // the stamp body and its flourish are drawn by hand
+    }
+
+    // A different family means a different line height, so the stamp has to be
+    // re-measured — it sizes itself to its text.
+    func applyFont() {
+        noteView.applyFont()
+        onLayoutNeeded?()
     }
 
     private func stickyMenu() -> NSMenu {
@@ -1457,16 +1614,68 @@ final class SelectionColorLayoutManager: NSLayoutManager {
         // words down to the next line — reading as a block of colour with words
         // sitting at the top of it rather than as words being marked.
         //
-        // Trimmed to the glyphs plus a little air. The top edge is the
-        // fragment's own, since that is where the glyphs start.
+        // **Only the horizontal extent and the origin come from the rect.** The
+        // height is the ink box plus air, computed the same for every line.
+        //
+        // Taking the height from the rect is what broke this. It read
+        // `min(fragment.height, lineHeight + padding * 2)` — a clamp written to
+        // defend against a tall fragment — while still lifting the box by
+        // `padding`. That holds up only while the rect is taller than the clamp,
+        // and on the last line of the document it is not: AppKit hands 19pt
+        // there against 48 elsewhere, so the clamp did nothing, the lift stayed,
+        // and the highlight drew 19pt starting 8pt *above* the words. It sat in
+        // the air over the line and clipped the tops of the letters — visibly
+        // broken, and only ever on the last line, which is why it looked
+        // intermittent.
         Style.selectionTone.setFill()
-        let height = Style.lineHeight + Style.selectionPadding * 2
+        let height = Style.inkHeight + Style.selectionPadding * 2
+
+        // Centred in the ruled band, not on the ink — the two are not the same
+        // place, and the gap between them is visible.
+        //
+        // The ruling centres the font's *line height* in the pitch (see
+        // `drawRuling`), and a line height is not symmetric around the ink it
+        // carries: Courier 16 is 19pt tall around a 16pt ink box, and puts 2.94
+        // of the difference above the glyphs and 0.06 below. So a band centred
+        // on the ink lands 1.44 low in the ruling — 12.44pt to the rule above
+        // against 9.56 to the rule below, which reads as the selection crowding
+        // the line beneath it. Centring on the box the ruling itself centres
+        // gives 11 and 11.
+        //
+        // This is why the placement asks `Style.ruledCentre` rather than working
+        // from the ink: the *height* of the band is the ink plus air, but
+        // *where* it sits is the ruling's business, and the ruling has never
+        // been about the ink. It also has to be measured against the rules as
+        // drawn, not as computed — see `Style.ruleY`.
+
+        // One rect is not one line. AppKit coalesces the full-width interior of
+        // a multi-line selection into a single tall block — select three lines
+        // from the very start and the first two arrive as one rect three bands
+        // tall — so drawing one fixed-height band per rect highlighted the
+        // block's first line and silently missed the rest.
+        //
+        // The lines it covers are asked of the layout manager rather than
+        // stepped over, because there is no single step to take: a line inside a
+        // paragraph is 48 apart from the next and a line that ends one is 96.
+        // Horizontal extent still comes from the rect, so AppKit keeps deciding
+        // how far a continuing selection runs past the last word on a line.
+        var lineTops: [CGFloat] = []
+        if let origin = firstTextView?.textContainerOrigin {
+            let glyphs = glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
+            enumerateLineFragments(forGlyphRange: glyphs) { fragment, _, _, _, _ in
+                lineTops.append(fragment.minY + origin.y)
+            }
+        }
+
         for i in 0..<rectCount {
-            let fragment = rectArray[i]
-            NSRect(x: fragment.minX,
-                   y: fragment.minY - Style.selectionPadding,
-                   width: fragment.width,
-                   height: min(fragment.height, height)).fill()
+            let rect = rectArray[i]
+            let covered = lineTops.filter { $0 >= rect.minY - 1 && $0 < rect.maxY - 1 }
+            // No layout to consult (or a rect that lines up with none of it):
+            // fall back to treating the rect as the one line it usually is.
+            for lineTop in covered.isEmpty ? [rect.minY] : covered {
+                NSRect(x: rect.minX, y: Style.ruledCentre(forLineTop: lineTop) - height / 2,
+                       width: rect.width, height: height).fill()
+            }
         }
     }
 }
@@ -1640,11 +1849,22 @@ final class PlainTextView: NSTextView {
             storage.beginEditing()
             storage.addAttribute(.foregroundColor, value: Style.ink, range: full)
             storage.endEditing()
-            didChangeText() // let the store pick the recoloured text up and save it
+            // Let the store pick the recoloured text up and save it — but not
+            // on this turn of the loop. `applyTheme` is called from
+            // `updateNSView`, so we are inside a SwiftUI update pass, and
+            // `didChangeText` runs the delegate straight through to
+            // `store.textChanged` → `updateWordCount`, which writes a
+            // `@Published`. Publishing from inside an update is not allowed;
+            // deferring by one hop puts the write after the pass instead.
+            DispatchQueue.main.async { [weak self] in self?.didChangeText() }
         }
         var attrs = typingAttributes
         attrs[.foregroundColor] = Style.ink
         typingAttributes = attrs
+        // The colour here is never drawn — `SelectionColorLayoutManager` fills
+        // with `Style.selectionTone` and ignores what it is handed. Setting it
+        // is still what tells AppKit there *is* a selection background to fill,
+        // and so what gets the override called at all. Don't remove it as dead.
         selectedTextAttributes = [.backgroundColor: Style.selection]
         smoothCaret.applyTheme()
         selectionIcon.applyTheme()
@@ -1655,7 +1875,16 @@ final class PlainTextView: NSTextView {
             titlebar.subviews.compactMap { $0 as? TrafficDotsOverlay }
                 .forEach { $0.needsDisplay = true }
         }
-        needsDisplay = true // horizontal rules are drawn, not stored
+        needsDisplay = true // the page, its paper and its ruling are all drawn
+    }
+
+    // The family the reader picked in settings, pushed into everything AppKit
+    // owns — which for the note is the text storage itself, reloaded by
+    // `docVersion`, and for the stickies is each stamp's own editor. Without
+    // this fan-out a sticky already on screen kept its old family until the
+    // note was closed and reopened.
+    func applyFont() {
+        stickyViews.values.forEach { $0.applyFont() }
     }
 
     // MARK: Smooth caret (MS Word-style glide)
@@ -1929,7 +2158,7 @@ final class PlainTextView: NSTextView {
         path.lineWidth = 1
         while y <= rect.maxY + 1 {
             if y >= rect.minY - 1 {
-                let py = y.rounded() + 0.5 // land on the pixel, not across two
+                let py = Style.ruleY(y) // land on the pixel, not across two
                 path.move(to: NSPoint(x: left, y: py))
                 path.line(to: NSPoint(x: right, y: py))
             }
@@ -2091,6 +2320,9 @@ struct HouseField: NSViewRepresentable {
     var bed: Bed = .sheet
     var centered = false
     var placeholder = ""
+    // Which step of the ink ladder the placeholder sits at. `inkFaint` for
+    // every field but ⌘K's, whose prompt is the muted step.
+    var placeholderAlpha: Double = 0.4
     var focused = false
     var onSubmit: () -> Void = {}
     var onCancel: () -> Void = {}
@@ -2114,9 +2346,7 @@ struct HouseField: NSViewRepresentable {
     func updateNSView(_ field: HouseNSTextField, context: Context) {
         context.coordinator.parent = self
         if field.stringValue != text { field.stringValue = text }
-        let font = NSFont(name: Style.fontFamily, size: size)
-            ?? NSFont(name: "Courier", size: size)
-            ?? .monospacedSystemFont(ofSize: size, weight: .regular)
+        let font = Style.font(size) // the same resolution the rest of the app uses
         field.font = font
         field.textColor = Style.ink.withAlphaComponent(alpha)
         field.alignment = centered ? .center : .left
@@ -2125,7 +2355,7 @@ struct HouseField: NSViewRepresentable {
         field.placeholderAttributedString = placeholder.isEmpty ? nil
             : NSAttributedString(string: placeholder, attributes: [
                 .font: font,
-                .foregroundColor: Style.ink.withAlphaComponent(0.4), // inkFaint
+                .foregroundColor: Style.ink.withAlphaComponent(placeholderAlpha),
             ])
         // Only on the false -> true transition, so an update pass can't steal
         // focus back after someone has clicked away.
@@ -2263,6 +2493,13 @@ struct RichTextEditor: NSViewRepresentable {
             context.coordinator.themeID = store.themeID
             tv.applyTheme()
         }
+        // Same shape as the theme fan-out above, and needed for the same
+        // reason: the note's own text is restyled in the store and arrives via
+        // docVersion, but a sticky's editor is an AppKit view holding a font.
+        if context.coordinator.fontFamily != store.fontFamily {
+            context.coordinator.fontFamily = store.fontFamily
+            tv.applyFont()
+        }
         if context.coordinator.loadedVersion != store.docVersion {
             tv.textStorage?.setAttributedString(store.attr)
             tv.typingAttributes = Style.base
@@ -2296,6 +2533,7 @@ struct RichTextEditor: NSViewRepresentable {
         }
         var wasSearch = false
         var themeID = Style.theme.id
+        var fontFamily = Style.fontFamily
         private var normalizing = false
 
         init(store: NotesStore) { self.store = store }
@@ -2466,6 +2704,35 @@ struct ArrowZoneModifier: ViewModifier {
 
 extension View {
     func arrowCursorZone() -> some View { modifier(ArrowZoneModifier()) }
+
+    // The recessed well a settings control sits in. Deliberately *not* papered:
+    // it is a hole in the card rather than another surface raised off it, which
+    // is the same call the ⌘K result rows and the folder hover state make.
+    //
+    // Applied inside a control's own label, so the whole well stays the click
+    // target — moving it out to the row would leave only the text clickable.
+    func settingsWell() -> some View {
+        padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity)
+            .background(RoundedRectangle(cornerRadius: 6).fill(sheetColor))
+    }
+}
+
+// The vault picker, shared by onboarding and by settings — the same panel, the
+// same prompt, the same message, which is what it was in both places. Returns
+// nil when the sheet is cancelled; the caller decides what a choice means
+// (onboarding remembers it until it finishes, settings acts on it at once).
+func chooseVaultFolder(startingAt current: URL) -> URL? {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.canCreateDirectories = true
+    panel.directoryURL = current
+    panel.prompt = "Use as Vault"
+    panel.message = "Choose the folder where notes are stored"
+    guard panel.runModal() == .OK else { return nil }
+    return panel.url
 }
 
 struct IconButton: View {
@@ -2572,42 +2839,33 @@ struct SearchPalette: View {
     }
 
     private func queryCard(_ results: [SearchHit], _ cmds: [Command]) -> some View {
-        Group {
-            ZStack(alignment: .leading) {
-                // macOS ignores prompt styling, so the placeholder is drawn manually
-                if query.isEmpty {
-                    Text("search")
-                        .font(.custom("Courier", size: 14))
-                        .foregroundStyle(inkMuted)
-                        .allowsHitTesting(false)
+        HouseField(
+            text: $query,
+            size: 14,
+            // Stays `.panel` even though the card is now built on the
+            // sheet token. Bed is about the tone the field actually
+            // sits on, not the token it started from: paper at 75%
+            // takes the card down to roughly panel's own lightness, so
+            // selecting in panel would be the invisible same-on-same
+            // this setting exists to avoid. `.panel` selects in sheet,
+            // which stays a clear step lighter than the card.
+            bed: .panel,
+            placeholder: "search",
+            placeholderAlpha: 0.55, // inkMuted — the prompt is a step firmer here
+            focused: focused,
+            onSubmit: { activate(results, cmds) },
+            onCancel: { store.searchShown = false },
+            onArrow: { down in
+                if down {
+                    selected = min(selected + 1, max(results.count + cmds.count - 1, 0))
+                } else {
+                    selected = max(selected - 1, 0)
                 }
-                HouseField(
-                    text: $query,
-                    size: 14,
-                    // Stays `.panel` even though the card is now built on the
-                    // sheet token. Bed is about the tone the field actually
-                    // sits on, not the token it started from: paper at 75%
-                    // takes the card down to roughly panel's own lightness, so
-                    // selecting in panel would be the invisible same-on-same
-                    // this setting exists to avoid. `.panel` selects in sheet,
-                    // which stays a clear step lighter than the card.
-                    bed: .panel,
-                    focused: focused,
-                    onSubmit: { activate(results, cmds) },
-                    onCancel: { store.searchShown = false },
-                    onArrow: { down in
-                        if down {
-                            selected = min(selected + 1, max(results.count + cmds.count - 1, 0))
-                        } else {
-                            selected = max(selected - 1, 0)
-                        }
-                        return true
-                    })
-                    .frame(height: 18)
-            }
+                return true
+            })
+            .frame(height: 18)
             .padding(.horizontal, 16)
             .padding(.vertical, 13)
-        }
         // Papered on the background rather than over the whole view: an overlay
         // would multiply the rows and their highlights too, printing ink that
         // is meant to sit *on* the card into it instead.
@@ -2620,7 +2878,7 @@ struct SearchPalette: View {
         VStack(spacing: 0) {
             if results.isEmpty {
                 Text("no matches")
-                    .font(.custom("Courier", size: 12))
+                    .font(houseFont(12))
                     .foregroundStyle(inkFaint)
                     .padding(14)
             } else {
@@ -2635,18 +2893,18 @@ struct SearchPalette: View {
                                         HStack(spacing: 4) {
                                             if let folder = hit.folder {
                                                 Text("\(folder)/")
-                                                    .font(.custom("Courier", size: 13))
+                                                    .font(houseFont(13))
                                                     .foregroundStyle(inkMuted)
                                                     .lineLimit(1)
                                             }
                                             Text(hit.title)
-                                                .font(.custom("Courier", size: 13))
+                                                .font(houseFont(13))
                                                 .foregroundStyle(brownInk)
                                                 .lineLimit(1)
                                         }
                                         if !hit.snippet.isEmpty {
                                             Text(hit.snippet)
-                                                .font(.custom("Courier", size: 11))
+                                                .font(houseFont(11))
                                                 .foregroundStyle(inkMuted)
                                                 .lineLimit(1)
                                         }
@@ -2720,7 +2978,7 @@ struct SearchPalette: View {
         Button(action: action) {
             HStack {
                 Text(title)
-                    .font(.custom("Courier", size: 12))
+                    .font(houseFont(12))
                     .foregroundStyle(inkMuted)
                 Spacer(minLength: 0)
             }
@@ -2888,7 +3146,7 @@ struct ContentView: View {
                         Text(store.displayName.isEmpty
                              ? "Juilee's personal writing pad <3"
                              : "\(store.displayName)'s personal writing pad <3")
-                            .font(.custom("Courier", size: 16))
+                            .font(houseFont(16))
                             .foregroundStyle(brownInk)
                         ThemePicker(store: store)
                     }
@@ -2928,7 +3186,7 @@ struct ContentView: View {
                 // flex gap either side of a 12 spacer), which is 9 and 26 here.
                 HStack(spacing: 9) {
                     Text("\(store.wordCount)")
-                        .font(.custom("Courier", size: 14))
+                        .font(houseFont(14))
                         .foregroundStyle(inkFaint)
                         .padding(.trailing, 17)
                     IconButton(systemName: "text.justify.left", help: "Past notes",
@@ -3071,65 +3329,36 @@ struct ContentView: View {
     private var settingsBlock: some View {
         VStack(alignment: .leading, spacing: 10) {
             // name — the same value onboarding collects; the hidden page reads it
-            HStack(spacing: 12) {
-                Text("name")
-                    .font(.custom("Courier", size: 12))
-                    .foregroundStyle(inkMuted)
-                    .frame(width: 44, alignment: .leading)
-                ZStack(alignment: .leading) {
-                    if nameDraft.isEmpty {
-                        Text("your name")
-                            .font(.custom("Courier", size: 12))
-                            .foregroundStyle(inkFaint)
-                            .allowsHitTesting(false)
-                    }
-                    HouseField(
-                        text: $nameDraft, size: 12,
-                        onSubmit: { store.setDisplayName(nameDraft) })
-                        .frame(height: 16)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .frame(maxWidth: .infinity)
-                .background(RoundedRectangle(cornerRadius: 6).fill(sheetColor))
+            settingsRow("name") {
+                HouseField(
+                    text: $nameDraft, size: 12,
+                    placeholder: "your name",
+                    onSubmit: { store.setDisplayName(nameDraft) })
+                    .frame(height: 16)
+                    .settingsWell()
             }
-            .padding(10)
-            .background(RoundedRectangle(cornerRadius: 10).fill(panelColor))
 
-            // vault
-            HStack(spacing: 12) {
-                Text("vault")
-                    .font(.custom("Courier", size: 12))
-                    .foregroundStyle(inkMuted)
-                    .frame(width: 44, alignment: .leading)
+            settingsRow("vault") {
                 Button {
-                    chooseVault()
+                    if let url = chooseVaultFolder(startingAt: store.dir) {
+                        store.changeVault(to: url)
+                    }
                 } label: {
                     HStack(spacing: 10) {
                         Text(store.vaultDisplay)
-                            .font(.custom("Courier", size: 12))
+                            .font(houseFont(12))
                             .foregroundStyle(inkStrong)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .frame(maxWidth: .infinity)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(sheetColor))
+                    .settingsWell()
                     .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
             }
-            .padding(10)
-            .background(RoundedRectangle(cornerRadius: 10).fill(panelColor))
 
-            // font
-            HStack(spacing: 12) {
-                Text("font")
-                    .font(.custom("Courier", size: 12))
-                    .foregroundStyle(inkMuted)
-                    .frame(width: 44, alignment: .leading)
+            settingsRow("font") {
                 Menu {
                     ForEach(NSFontManager.shared.availableFontFamilies.sorted(), id: \.self) { family in
                         Button(family) { store.setFont(family) }
@@ -3137,36 +3366,45 @@ struct ContentView: View {
                 } label: {
                     HStack {
                         Text(store.fontFamily)
-                            .font(.custom("Courier", size: 12))
+                            .font(houseFont(12))
                             .foregroundStyle(inkStrong)
                         Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .frame(maxWidth: .infinity)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(sheetColor))
+                    .settingsWell()
                     .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
                 .menuIndicator(.hidden)
             }
-            .padding(10)
-            .background(RoundedRectangle(cornerRadius: 10).fill(panelColor))
         }
         .frame(width: 480, alignment: .leading)
     }
 
-    private func chooseVault() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.canCreateDirectories = true
-        panel.directoryURL = store.dir
-        panel.prompt = "Use as Vault"
-        panel.message = "Choose the folder where notes are stored"
-        if panel.runModal() == .OK, let url = panel.url {
-            store.changeVault(to: url)
+    // One row shape, three times over: a fixed-width label and a control
+    // filling the rest, on a papered card.
+    //
+    // Papered because these three were the last flat raised surfaces in the
+    // app. The settings page itself takes the sheet stock, and the cards on it
+    // did not — a screen printed on paper carrying cards printed on nothing.
+    // They take the same stock and strength as the notes panel, because they
+    // are the same thing: a panel-toned pane raised off the page. Colour, then
+    // paper, then clip — the order every other papered surface uses, so the
+    // grain stops at the corner radius instead of squaring off behind it.
+    private func settingsRow<Content: View>(
+        _ label: String, @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(spacing: 12) {
+            Text(label)
+                .font(houseFont(12))
+                .foregroundStyle(inkMuted)
+                .frame(width: 44, alignment: .leading)
+            content()
         }
+        .padding(10)
+        .background(
+            panelColor.papered(.folderPanel)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        )
     }
 
     private var notesPanel: some View {
@@ -3188,7 +3426,7 @@ struct ContentView: View {
                 if visiblePanelNotes.isEmpty,
                    panelLocation != nil || (store.folders.isEmpty && !creatingFolder) {
                     Text("no notes yet")
-                        .font(.custom("Courier", size: 13))
+                        .font(houseFont(13))
                         .foregroundStyle(inkFaint)
                         .padding(.vertical, 9)
                         .padding(.horizontal, 18)
@@ -3273,7 +3511,7 @@ struct ContentView: View {
         } label: {
             HStack(spacing: 8) {
                 Text(note.title)
-                    .font(.custom("Courier", size: 13))
+                    .font(houseFont(13))
                     .foregroundStyle(inkStrong)
                     .lineLimit(1)
                 Spacer(minLength: 0)
@@ -3333,8 +3571,8 @@ struct ContentView: View {
             // computed from these metrics.
             VStack(alignment: .leading, spacing: 0) {
                 Color.clear
-                    .frame(width: folderSprigWidth, height: folderSprigHeight)
-                Spacer(minLength: folderSprigGap)
+                    .frame(width: folderMarkWidth, height: folderMarkHeight)
+                Spacer(minLength: folderMarkGap)
                 HStack(spacing: 6) {
                     if renamingFolder == folder {
                         HouseField(
@@ -3349,8 +3587,8 @@ struct ContentView: View {
                             .onAppear { folderFieldFocused = true }
                             .onDisappear { folderFieldFocused = false }
                     } else {
-                        Text(folder.uppercased())
-                            .font(.custom("Courier", size: 13))
+                        Text(folder)
+                            .font(houseFont(13))
                             .foregroundStyle(inkStrong)
                             .lineLimit(1)
                         Spacer(minLength: 0)
@@ -3435,8 +3673,8 @@ struct ContentView: View {
             panelLocation = nil
         } label: {
             HStack(spacing: 8) {
-                Text("‹ \(location.uppercased())")
-                    .font(.custom("Courier", size: 13))
+                Text("‹ \(location)")
+                    .font(houseFont(13))
                     .foregroundStyle(inkMuted)
                     .lineLimit(1)
                 Spacer(minLength: 0)

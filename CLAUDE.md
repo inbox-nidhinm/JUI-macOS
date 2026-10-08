@@ -9,42 +9,54 @@ map of *where things are* and *what will break if you touch them*.
 
 ## Shape of the project
 
-No Xcode project. Two Swift files compiled directly by `swiftc`:
+No Xcode project. Four Swift files compiled directly by `swiftc`:
 
 | File | Lines | Contents |
 |---|---|---|
-| `main.swift` | ~2600 | Everything: tokens, store, text engine, stickies, panel, search, settings |
-| `Theme.swift` | ~150 | The six palettes, and the mood-dot `ThemePicker` |
-| `Onboarding.swift` | ~490 | First-run envelope flow only |
+| `main.swift` | ~3500 | Everything: tokens, store, text engine, stickies, panel, search, settings |
+| `Theme.swift` | ~290 | The six palettes, the `AppIcon` recolour, the mood-dot `ThemePicker` |
+| `Texture.swift` | ~240 | The paper: which stock each surface takes, at what grain and strength |
+| `Onboarding.swift` | ~510 | First-run envelope flow only |
 | `build.sh` | | Universal build + ad-hoc sign + verify |
 | `Info.plist` | | `com.nidhin.jui`, `LSMinimumSystemVersion 13.0` |
 
-**Adding a `.swift` file means adding it to the `swiftc` line in `build.sh:24`.**
+**Adding a `.swift` file means adding it to the `swiftc` line in `build.sh`** —
+grep for `for arch in`.
 
-Assets live at the repo root and are copied into `Contents/Resources` by
-`build.sh`: `AppIcon.icns`, `Flourish.png` (corner flourish), `StickyFlower.png`,
-`FolderSprig.png`, `OnboardingLogo.png`. **Adding an asset means adding it to the
-loop in `build.sh:17`** or it silently won't ship.
+**Art ships as directories, not as a list of filenames.** `Contents/Resources`
+gets `AppIcon.icns`, `Textures/` (three greyscale JPEGs, derived from
+`Art/Textures`) and `FlourishFrames/{corner,folder,sticky}/` (the stop-motion
+frames, derived from `Art/Vectors`). Both are copied wholesale, which is
+deliberate: the per-asset loop that used to sit here did nothing when someone
+added a file and forgot to name it, and on this branch drawing nothing and
+drawing a very subtle grain look identical. There are no loose PNGs at the repo
+root any more — the six that were there outlived what drew them and were still
+shipping in every bundle.
 
 ### Landmarks in `main.swift`
 
-| Region | Line | What |
-|---|---|---|
-| Colour tokens | 7–35 | Computed vars reading `Style.theme` — never literals |
-| `Style` | 38 | Theme global, fonts, margins, paragraph styles, hr/bullet constants |
-| `NoteMeta` / `SearchHit` / `Sticky` | 99–125 | Models |
-| `NotesStore` | 127 | The single source of truth for everything |
-| `SmoothCaret` | 717 | Shared caret glide (note editor *and* stickies) |
-| `StickyView` | 843 | Postage-stamp margin annotation, drawn by hand |
-| `PlainTextView` | 1107 | The `NSTextView` subclass — bullets, rules, cursors, paste, `applyTheme` |
-| `RichTextEditor` | 1571 | `NSViewRepresentable` bridge + `Coordinator` |
-| `TrafficDotsOverlay` / `WindowConfigurator` | 1750–1792 | The flat dots over the traffic lights |
-| `SearchPalette` | 1892 | ⌘K — results *and* commands |
-| `ContentView` | 2098 | Layout, notes/folders panel, settings block |
-| `PlainEditorApp` | 2681 | `@main` (name is legacy — app was renamed, type wasn't) |
+Keyed on what to grep for rather than on a line number. Every number in the
+table this replaced had drifted by 250–800 lines, which made the whole thing
+worse than nothing: wrong enough to send you to the wrong place, confident
+enough to be believed.
 
-These line numbers drift with every edit. If one is off by more than a few, grep
-the declaration rather than trusting the table.
+| Region | Grep for | What |
+|---|---|---|
+| Colour tokens | `var sheetColor` | Computed vars reading `Style.theme` — never literals |
+| Type token | `func houseFont` | The one font every SwiftUI call site goes through |
+| `Style` | `enum Style` | Theme global, fonts, margins, paragraph styles, the ruled grid |
+| Models | `struct NoteMeta` | `NoteMeta` / `SearchHit` / `Sticky` |
+| `NotesStore` | `final class NotesStore` | The single source of truth for everything |
+| Document loading | `MARK: Getting a document` | `load` / `loadBlank` — every route into the editor |
+| `SmoothCaret` | `final class SmoothCaret` | Shared caret glide (note editor *and* stickies) |
+| `StickyView` | `final class StickyView` | Postage-stamp margin annotation, drawn by hand |
+| `PlainTextView` | `final class PlainTextView` | The `NSTextView` subclass — bullets, ruling, cursors, paste, `applyTheme` |
+| `HouseField` | `struct HouseField` | The app's only text field |
+| `RichTextEditor` | `struct RichTextEditor` | `NSViewRepresentable` bridge + `Coordinator` |
+| Traffic lights | `final class TrafficDotsOverlay` | The flat dots over the real buttons |
+| `SearchPalette` | `struct SearchPalette` | ⌘K — results *and* commands |
+| `ContentView` | `struct ContentView` | Layout, notes/folders panel, settings block |
+| `@main` | `struct PlainEditorApp` | Name is legacy — the app was renamed, the type wasn't |
 
 ### ⌘K holds commands as well as matches
 
@@ -81,22 +93,42 @@ readable in Finder:
     <uuid>.rtf
 ```
 
-- Note **title** is derived, never stored: first non-empty line, 42 chars (`NotesStore.title`, :532).
+- Note **title** is derived, never stored: first non-empty line, 42 chars (`NotesStore.title`).
 - Note **order** is `contentModificationDate` descending.
-- `refreshList()` (:486) rescans the vault from disk; it is the only thing that
+- `refreshList()` rescans the vault from disk; it is the only thing that
   populates `notes`/`folders`. Call it after any file operation.
-- Saves are debounced 300ms (`scheduleSave`, :637) and also fire on
+- Saves are debounced 300ms (`scheduleSave`) and also fire on
   `willTerminate` and before any note switch. An empty never-typed note is
-  never written to disk (:651).
+  never written to disk.
 
-`UserDefaults` keys — the complete set: `vaultPath`, `fontFamily`, `displayName`,
-`onboardingCompleted`.
+`UserDefaults` keys — the complete set: `vaultPath`, `fontFamily`, `themeID`,
+`displayName`, `onboardingCompleted`.
+
+**Titles are cached against modification date** (`titleCache`). Deriving one
+means opening the file and parsing the RTF, and `saveNow` ends in
+`refreshList` — so without the cache every 300ms pause in typing re-parsed
+every note in the vault. If you add a way for a note's first line to change
+without its file being rewritten, that cache is what will show it stale.
+
+**Deleting a folder deletes the notes in it.** It used to slide them back to
+unfiled. There is no trash and no undo, which is the same deal `delete(_:)`
+offers for a single note. The whole directory goes rather than a filtered sweep
+of it: a leftover file of some other kind would make `removeItem` fail and leave
+a folder in the panel that nothing could get rid of. If the open note is one of
+the casualties, its pending save is cancelled first — a debounce firing
+afterwards writes the file straight back into a directory that no longer exists.
+
+**Folder names are shown as typed**, not uppercased, and a rename that only
+changes case has to skip the uniquing loop: the vault is case-insensitive, so
+`fileExists` for "Notes" is true while the folder is still called "notes" — the
+folder answers for the name it is being renamed *to*, the loop reads that as a
+collision, and recapitalising a folder produced "Notes 2".
 
 ### `docVersion` is the load signal
 
 `store.docVersion` increments **only when a different document is loaded into the
 editor — never on typing**. `RichTextEditor.Coordinator.loadedVersion` compares
-against it (:1528) to decide whether to blow away the text view's contents.
+against it to decide whether to blow away the text view's contents.
 
 If you add a path that changes `attr` wholesale, bump `docVersion`. If you bump
 it on keystrokes, you'll wipe the undo stack and fight the caret on every letter.
@@ -109,27 +141,27 @@ Three mutually-aware overlays, all flags on the store:
 - `searchShown` — ⌘K palette
 - `onboardingShown` — first run; **cannot be escaped** (`onExitCommand {}`)
 
-`editorBlocked` (`hiddenShown || onboardingShown`, :160) freezes the text view.
-`RichTextEditor.updateNSView` (:1510) is what actually flips
+`editorBlocked` (`hiddenShown || onboardingShown`) freezes the text view.
+`RichTextEditor.updateNSView` is what actually flips
 `isEditable`/`isSelectable` and moves first responder.
 
 ## Invariants — break these and something visibly regresses
 
-**TextKit 1, assembled by hand.** `makeNSView` (:1463) builds
+**TextKit 1, assembled by hand.** `makeNSView` builds
 `NSTextStorage` → `SelectionColorLayoutManager` → `NSTextContainer` explicitly,
 and `tv.retainedStorage` keeps the storage alive. This is *not* legacy drift —
-`SelectionColorLayoutManager` (:1002) is the only reliable way to stop selections
+`SelectionColorLayoutManager` is the only reliable way to stop selections
 turning system-gray when focus moves into a sticky. Do not migrate to TextKit 2.
 
-**Cursor handling lives in exactly two places.** `resetCursorRects` (:1404) is the
+**Cursor handling lives in exactly two places.** `resetCursorRects` is the
 mechanism AppKit actually honours for the dead margins; `ArrowZones.hoverCount`
-(:1016) lets SwiftUI controls drawn *on top of* the text view claim the arrow via
+ lets SwiftUI controls drawn *on top of* the text view claim the arrow via
 `.arrowCursorZone()`. Earlier attempts elsewhere (`mouseMoved`, `cursorUpdate`)
 are kept as belt-and-braces but are not sufficient alone. Don't add a third way.
 
 **The native caret is fully suppressed, three ways at once** — `insertionPointColor
 = .clear`, an empty `drawInsertionPoint` override, and hiding
-`NSTextInsertionIndicator` on macOS 14+ (:698). All three are needed. `SmoothCaret`
+`NSTextInsertionIndicator` on macOS 14+. All three are needed. `SmoothCaret`
 draws it as a `CALayer`. Any new text field in the app should use it too.
 
 **Horizontal rules are gone** on this branch. `---` + Return no longer becomes
@@ -149,22 +181,88 @@ attribute being rebuilt. `normalizeFonts` still reads `headIndent` at runtime,
 where the attribute is trustworthy.
 
 **Bullets are literal `"• "` text** plus `Style.bulletParagraph` (hanging indent).
-`normalizeFonts` (:1587) identifies them by `headIndent > 0` — if you change how
+`normalizeFonts` identifies them by `headIndent > 0` — if you change how
 bullets indent, update that check or bullet paragraphs get restyled as prose.
 
 **Typewriter input.** Smart dashes, quotes, and text replacement are off
 everywhere. Smart dashes silently broke `---` rules once already.
 
 **Sticky anchors are character ranges, remapped on every edit** via
-`textView(_:shouldChangeTextIn:)` → `store.remapStickies` (:272). Anchors inside a
-deleted range collapse to the edit point rather than dying. `syncStickies` (:1078)
+`textView(_:shouldChangeTextIn:)` → `store.remapStickies`. Anchors inside a
+deleted range collapse to the edit point rather than dying. `syncStickies`
 rebuilds positions on every layout pass. A sticky measures its own height, and
-must be width-set *before* measuring (:946) or long notes load at default size.
+must be width-set *before* measuring or long notes load at default size.
 
 **`normalizeFonts` is a safety net, not the styling path.** It forces family/size,
 paragraph style, and ink color, and strips underline/strike/link/shadow/etc. from
 anything that arrives styled (drops, services). Paste is already handled
-separately and always plain (:1218).
+separately and always plain.
+
+**A selection or a caret is sized off the ink box, never off the rect AppKit
+hands it.** `Style.inkOffset` and `Style.inkHeight` are that box: the baseline
+sits `defaultBaselineOffset` down from a line fragment's top, and the ink runs
+from there up by the ascender and down by the descender. Everything else in the
+fragment is leading, which on a 48pt band is most of it.
+
+The rect's *origin* is dependable — it is the fragment's top. Its *height* is
+not, and this is the trap: for the same 16pt type it arrives **19pt** on the last
+line of the document, **48** on a line with another line under it (the line plus
+`lineSpacing`), and **96** on a line that ends a paragraph (plus
+`paragraphSpacing`). Measured, all three.
+
+`fillBackgroundRectArray` used to read `min(fragment.height, lineHeight + padding
+* 2)` while still lifting the box by `padding` — a clamp that only holds while
+the rect is taller than the clamp. On the last line it isn't, so the clamp did
+nothing, the lift stayed, and the highlight drew 19pt starting 8pt *above* the
+words: a band hanging in the air over the line, clipping the tops of the letters.
+Only ever the last line, which is what made it look intermittent rather than
+wrong. `SmoothCaret` carried the same construct and changed height by 4pt between
+lines because of it. Both now compute `inkOffset`/`inkHeight` and are one size
+everywhere.
+
+**And one rect is not one line.** AppKit coalesces the full-width interior of a
+multi-line selection into a single tall block — select three lines from the very
+start and the first two arrive as *one* rect three bands tall. A fixed-height
+band drawn per rect therefore highlighted the block's first line and silently
+missed the rest, which is a separate bug from the one above and was hidden by it.
+
+**And it is centred in the ruled band, not on the ink.** The two are not the
+same place: the ruling centres the font's *line height* in the pitch, and a line
+height is not symmetric around the ink it carries — Courier 16 is 19pt around a
+16pt ink box and puts 2.94 of the difference above the glyphs, 0.06 below. A band
+centred on the ink therefore sat 12.44pt from the rule above and 9.56 from the
+one below, which reads as the selection crowding the line beneath it.
+
+Measure against the rules **as drawn**, not as computed. `drawRuling` snaps each
+one with `.rounded() + 0.5` so a hairline doesn't smear across two device pixels,
+and that snap moves it — a full point, when the computed y lands on a half, which
+is exactly what Courier's 29pt `lineSpacing` produces. Centring on the computed
+midpoint left the band 1pt high, visible at 2x. Both the ruling and the selection
+now go through `Style.ruleY` / `Style.ruledCentre`, so they cannot disagree.
+Verified on a render: rule centres at 197.0 and 293.0 device px, band centre
+245.0, midpoint 245.0.
+
+So `fillBackgroundRectArray` asks the layout manager which line fragments each
+rect covers (`enumerateLineFragments` over the selection's glyph range, offset by
+`textContainerOrigin`) and draws one band per line. It does **not** step down the
+rect by a fixed pitch: there is no single pitch to step by, since a line inside a
+paragraph is 48 from the next and a line that ends one is 96. Horizontal extent
+still comes from the rect, so AppKit keeps deciding how far a continuing
+selection runs past the last word on a line.
+
+**Never write attributes from inside `enumerateAttribute`.** Adding an attribute
+can merge a run with its neighbour, which reshapes the ranges being walked.
+`normalizeFonts` collects closures and applies them after; `Style.applyFont`
+collects `(font, range)` pairs and applies them inside `beginEditing`/
+`endEditing`; `toggleItalics` brackets its whole walk the same way. There is no
+fourth pattern, and the one that used to write in place was the odd one out.
+
+**`applyTheme` defers `didChangeText` by one hop.** It is called from
+`updateNSView` — so from inside a SwiftUI update pass — and `didChangeText` runs
+the delegate straight through to `store.textChanged` → `updateWordCount`, which
+writes a `@Published`. Publishing from inside an update pass is not allowed. The
+`DispatchQueue.main.async` around it is what moves that write after the pass;
+don't unwrap it because it looks redundant.
 
 ## macOS 13 floor — the hard compatibility rule
 
@@ -195,6 +293,15 @@ window's shared field editor doesn't hold either: AppKit re-runs
 All five fields go through it — onboarding name, settings name, ⌘K query, folder
 rename, new folder. It also carries submit / cancel / arrow callbacks, the
 placeholder, and the ink-ladder step for the text.
+
+**Use its `placeholder`, not a `Text` behind it.** Three of the five drew their
+own prompt in a `ZStack` under a comment about macOS ignoring `prompt` styling —
+true of SwiftUI's `TextField`, and irrelevant here, because
+`placeholderAttributedString` takes whatever attributes it is given. The
+hand-drawn ones also went on using Courier after the field itself started
+following the font picker, so ⌘K showed two families on one line.
+`placeholderAlpha` exists because ⌘K's prompt is `inkMuted` where the others are
+`inkFaint`; it defaults to faint.
 
 **`HouseField.Bed` is the non-obvious part.** The selection has to be one step
 away from whatever the field is sitting on. The editor selects panel-on-sheet,
@@ -243,9 +350,16 @@ so neither branch's bundle can be committed by the other's build.
 
 ### The flourish animation, and two traps in rasterising it
 
-The corner flourish draws itself once at launch, from 30 frames split out of one
+The corner flourish draws itself once at launch, from frames split out of one
 animated SVG by `Art/split-frames.py` and rasterised by `Art/render-frames.swift`,
-both run from `build.sh`.
+both run from `build.sh`. Currently 30 of them, and **nothing in the app says
+30**: `AnimatedFlourish.frames` counts what shipped by enumerating the bundle
+directory, and the aspect ratio, the sequence's duration and the onboarding beat
+that waits for it are all derived from that array. The loader used to hardcode
+`1...30`, which made those derivations a fiction — a re-export of a different
+length would have been rasterised and shipped in full, then played thirty frames
+of and stopped. Frames are sorted by the number in the name rather than by the
+string, so a hundred-frame export doesn't order 100 before 11.
 
 **Render through WebKit, never AppKit.** `NSImage` loads SVG and silently drops
 `<mask>`. The later frames of this animation are drawn by masking a full-bleed
@@ -265,6 +379,16 @@ as white silhouettes and are tinted at draw time, so one sequence serves all six
 themes. Playback is a repeating timer stepping an index, not an animation:
 stop-motion is discrete, and interpolating between frames would remove the point
 of it.
+
+**The sticky's tinted copies are cached for the current theme only.** SwiftUI
+tints with `.renderingMode(.template)`, but `StickyView` draws by hand, so each
+frame needs a tinted copy built through `lockFocus` — a whole decoded bitmap, not
+a reference to the source. Thirty frames of a ~366×405 stamp is about 18MB. The
+cache used to be keyed by theme **and** frame, so changing mood added a set
+rather than replacing one, and six moods with one animated sticky reached roughly
+106MB that nothing could ever ask for again. `flowerCacheTheme` now wipes the lot
+on a change. Nothing visible moves: the same image is rebuilt the same way from
+the same frame, and the only tint ever requested is the one in force.
 
 ### The ruled grid, and the Figma system it comes from
 
@@ -336,6 +460,13 @@ still runs, harmlessly: it clears any override a previous run left behind.
 
 The call sites in `main.swift` are untouched, so re-enabling is one line.
 
+**That leaves `recoloured`, `persist`, `image(for:)`, the cache and `pristine`
+unreachable on this branch, and they are kept deliberately.** They are live code
+on `main`, and this branch is meant to merge *forward* into it — deleting them
+here would make the merge quietly drop the themed Dock icon, which is a feature
+rather than drift. It is the one region of unreachable code in the repo that is
+supposed to be there; everything else the audit found has been removed.
+
 The scratch vault at `~/Library/Application Support/re-JUI/Notes` was seeded
 with a **copy** of the real notes, so the redesign is judged against real prose
 — real line lengths, real folders, a real sticky — rather than lorem ipsum.
@@ -392,8 +523,14 @@ cause. `build.sh` passes `--norsrc --noextattr` to `ditto` for exactly this
 reason. To check an archive before sending it:
 
 ```bash
-unzip -Z1 JUI.zip   # must show 13 entries, no ._ files, no __MACOSX
+unzip -Z1 JUI.zip | grep -c '^\._\|__MACOSX'   # must be 0
 ```
+
+What matters is that count, not the number of entries. This used to read "must
+show 13 entries", from before the app shipped a directory of textures and three
+directories of animation frames — it is a little over a hundred now, and a
+hardcoded total is a check that fails for the wrong reason every time the art
+changes.
 
 **Distribution caveat.** The app is only ad-hoc signed — notarization needs a paid
 Apple Developer account. Every rebuild gets a fresh signature, so a Mac that
@@ -412,6 +549,26 @@ Then move it to `/Applications` before opening (a quarantined app launched from
 Reuse the existing tokens; don't introduce new colors unless the design genuinely
 has no near neighbour (the envelope `#EBCEA3` and letter `#FFFAF3` are the only
 two that earned it).
+
+### Every raised surface takes paper
+
+`Texture.swift` holds the list: `page`, `sticky`, `folderPanel`, `folderTile`,
+`palette`, `button`, `envelope`, `letter`. Each names a stock, a strength and a
+fit, all three recovered from the design rather than guessed — read the comments
+there before changing a number.
+
+**A new raised surface goes on the list.** In SwiftUI the shape is
+`colour.papered(.surface).clipShape(…)` — colour, then paper, then clip, in that
+order, or the grain squares off behind the corner radius. The settings cards were
+the last three flat ones in the app and now take `.folderPanel`, since they are
+the same thing the notes panel is: a panel-toned pane raised off the page. Their
+inner wells stay flat, because a well is a hole in the card rather than another
+surface on top of it — the same call the ⌘K result rows make.
+
+The AppKit half is `Surface.draw(in:)`, and it has to be drawn into the same
+context as the colour it is texturing: a multiply can only see what is already in
+its own context, so paper drawn over a background living *behind* the view finds
+nothing to darken and paints flat instead.
 
 ### Theming — read this before touching any colour
 
@@ -505,21 +662,37 @@ If JUI is ever notarised, this needs revisiting: notarisation would reject a
 bundle carrying that file, though the artifact you submit is built fresh and so
 would be clean.
 
-**Bundled art must be tinted, not drawn raw.** All four PNGs are single-colour
-silhouettes with clean alpha. In SwiftUI use `.renderingMode(.template)` plus a
-`foregroundStyle` (that's how `Flourish`, `FolderSprig` and `OnboardingLogo`
-follow the theme). `StickyFlower` is drawn by hand in `StickyView.draw`, so it
-gets a tinted copy cached per theme — `sourceAtop` straight over the original
-would catch the sticky's own opaque background. Their baked tones map to
-`flourish`, `divider`, `flourish` and `sheet` respectively, which is why the
-cream theme looks unchanged.
+**Bundled art must be tinted, not drawn raw.** The flourish frames are
+single-colour silhouettes with clean alpha, which is what lets one sequence serve
+all six themes. In SwiftUI use `.renderingMode(.template)` plus a
+`foregroundStyle` — that is what `AnimatedFlourish` does. `StickyView` draws by
+hand instead, so it bakes a tinted copy: `sourceAtop` straight over the original
+would catch the sticky's own opaque background.
+
+The four static PNGs this paragraph used to describe — `Flourish`,
+`StickyFlower`, `FolderSprig`, `OnboardingLogo`, plus the later `StickyFlourish`
+and `FolderFlourish` — are gone. The animation replaced every one of them and
+nothing had read them for some time; they were still being copied into every
+bundle. The one thing they left behind is `folderMarkWidth`/`Height`/`Gap` in
+`main.swift`, which hold the air above a folder's name — the mark moved to the
+tile's background, so those are the sprig's old metrics keeping its space, and
+the tile height is computed from them.
 
 ### Palette (cream — the other five are the same structure, hue-rotated)
 
-- sheet `#FDF0D9` · panel/selection `#ECDBBE` · ink `#71390D` · divider
-  `#E6D4B5` · open-note dot `#A88D34` · folder card `#F3E4CA` · rule `#AD9E84`
-  · sticky `#F7C82D` · flourish `#F2E3C9`/`#F2DEBA` · envelope `#EBCEA3` ·
-  letter `#FFFAF3`
+- sheet `#FDF0D9` · panel/selection `#ECDBBE` · ink `#71390D` · open-note dot
+  `#A88D34` · folder card `#F3E4CA` · sticky `#F7C82D` · flourish `#F2E3C9` ·
+  envelope `#EBCEA3` · letter `#FFFAF3`
+- **Three tokens that used to be here are now tones, not colours**, and were
+  removed from `Theme` rather than left unused: `divider` (`#E6D4B5`) became
+  `panelDividerColor`, black at 12%, because a fixed hairline *inverted* once the
+  panels took their paper and read as a pale scratch across the card; `rule`
+  (`#AD9E84`) became `Style.ruleTone` when horizontal rules gave way to the ruled
+  page; `flourishHover` (`#F2DEBA`) became `flourishHovered`, panel taken a step
+  toward the ink, because hovering has to *deepen* the mark now rather than lift
+  it. All three follow the same principle — a tone is one value that is right in
+  all six themes and over paper, where a colour has to be picked six times and
+  can still invert.
 - **There is one ink, `brownInk` (`#71390D`), at four fixed steps** —
   `brownInk` (1.0) / `inkStrong` (0.85) / `inkMuted` (0.55) / `inkFaint` (0.4),
   declared at the top of `main.swift`. Write `.foregroundStyle(inkMuted)`, never
@@ -529,13 +702,28 @@ cream theme looks unchanged.
 - **The caret is `Style.ink`, deliberately.** It was `NSColor.controlAccentColor`
   and rendered in the user's system accent — pink on the author's Mac. The one
   element on the page that never stops moving has to be in palette.
-- Type scale is 10 / 11 / 12 / 13 / 14 / 16, Courier throughout. **16 is the
-  largest text in the app** — including onboarding titles, which is why the
-  Figma frames' 34/24 were deliberately not used (`Onboarding.swift:60`).
+- Type scale is 10 / 11 / 12 / 13 / 14 / 16. **16 is the largest text in the
+  app** — including onboarding titles, which is why the Figma frames' 34/24 were
+  deliberately not used (see the `T` enum in `Onboarding.swift`).
+- **Write `.font(houseFont(13))`, never `.font(.custom("Courier", size: 13))`.**
+  Type goes through one function for the same reason colour goes through one
+  token: settings lets the reader change family, and a literal doesn't follow it.
+  Every call site was a literal, so the picker restyled the page and left the
+  panel rows, search results, folder names, stickies and onboarding in Courier —
+  and inside the ⌘K field the typed text followed the choice while the
+  placeholder drawn behind it did not, which put two families on one line.
+  `Style.font(_:)` is the AppKit half, resolved through `NSFontManager` because
+  `fontFamily` is a *family* name: `NSFont(name:)` wants a font's own name, and
+  the two coincide for Courier and not for most of what the picker offers.
+- **AppKit views holding a font need pushing, like colours do.** A sticky's
+  editor is one, so `RichTextEditor.updateNSView` watches `store.fontFamily` and
+  calls `tv.applyFont()` — the same shape as the `themeID` fan-out beside it. The
+  note's own text arrives via `docVersion` instead, since `setFont` restyles the
+  storage in the store and bumps it.
 - Motion: 0.15s ease-out for hovers and panel fades, 0.2–0.25s for page
   transitions, 0.7–0.75s for the onboarding letter. Reduced-motion collapses
   onboarding to a straight cut.
-- Exactly one highlight exists in the notes panel at a time (`PanelHighlight`,
-  :1938). Notes slide a shared box via `matchedGeometryEffect`; folder cards
+- Exactly one highlight exists in the notes panel at a time
+  (`PanelHighlight`). Notes slide a shared box via `matchedGeometryEffect`; folder cards
   cross-fade instead, because morphing between tall half-width cards and short
   full-width rows arced visibly.

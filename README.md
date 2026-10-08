@@ -4,17 +4,18 @@ A single-window macOS writing pad. A cream sheet, Courier, and no chrome — bui
 to feel like a page rather than an app.
 
 It was written as a gift, so it optimises for how it *feels* to write in rather
-than for feature count. Three Swift files and a shell script: no Xcode project,
+than for feature count. Four Swift files and a shell script: no Xcode project,
 no package manager, no dependencies.
 
 ## What it does
 
 - **A page, not a document window.** Hidden title bar, wide margins, justified
-  paragraphs, and traffic lights covered by flat cream dots that only reveal
-  themselves under the pointer.
+  paragraphs, ruled paper, and traffic lights covered by flat cream dots that
+  only reveal themselves under the pointer.
 - **Silent autosave.** Notes are RTF files in a folder you choose, named by UUID
   — readable in Finder, portable, no database.
-- **Folders**, one level deep, that are real subdirectories on disk.
+- **Folders**, one level deep, that are real subdirectories on disk. Deleting a
+  folder deletes the notes inside it; there is no trash.
 - **Sticky notes** anchored to a range of text rather than to pixels:
   postage-stamp margin annotations that survive edits and reflow, and can be
   dragged out to pin anywhere on the page.
@@ -23,9 +24,11 @@ no package manager, no dependencies.
 - **Six themes** — cream, mint, sky, coral, lilac, orchid — applied instantly.
   Each one holds the original's lightness and saturation and rotates only hue,
   so contrast and hierarchy survive the change.
-- **Writing conveniences**: markdown-style bullets, `---` for a full-width rule,
-  ⌘I for italics, typewriter-style input that never rewrites your dashes or
-  quotes, and a caret that glides rather than jumps.
+- **Writing conveniences**: markdown-style bullets, ⌘I for italics,
+  typewriter-style input that never rewrites your dashes or quotes, and a caret
+  that glides rather than jumps.
+- **One font choice for the whole app.** The family picked in settings sets the
+  page, the panels, the search palette and the sticky notes together.
 
 ## Build
 
@@ -55,8 +58,9 @@ confusing failures.
 
 | File | What's in it |
 |---|---|
-| `main.swift` | Colour tokens, store, text engine, stickies, panel, search, settings |
+| `main.swift` | Colour and type tokens, store, text engine, stickies, panel, search, settings |
 | `Theme.swift` | The six palettes and the theme picker |
+| `Texture.swift` | The paper: which stock each surface takes, and how hard |
 | `Onboarding.swift` | First-run envelope flow |
 | `build.sh` | Build, sign, verify, package, push |
 | `CLAUDE.md` | Architecture notes, and the invariants worth not breaking |
