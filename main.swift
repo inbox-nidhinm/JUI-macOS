@@ -556,7 +556,6 @@ final class NotesStore: ObservableObject {
     // MARK: Sticky annotations
 
     @Published var stickies: [Sticky] = []
-    @Published var stickiesHidden = false
 
     private func stickiesURL(_ id: String, in folder: String?) -> URL {
         baseDir(folder).appendingPathComponent("\(id).stickies.json")
@@ -579,7 +578,6 @@ final class NotesStore: ObservableObject {
         sticky.left = left
         stickies.append(sticky)
         freshStickies.insert(sticky.id)
-        stickiesHidden = false
         scheduleSave()
         return sticky.id
     }
@@ -1200,6 +1198,10 @@ final class SmoothCaret {
 // The sticky's editor: right-click gets the sticky's menu, not the text menu.
 final class StickyTextView: NSTextView {
     var menuProvider: (() -> NSMenu)?
+    // Told when the sticky gains or loses focus, a hop later — once the
+    // window's first responder says so — which is what shows and hides its
+    // buttons.
+    var onFocusChange: (() -> Void)?
     private lazy var smoothCaret = SmoothCaret(view: self)
 
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -1232,27 +1234,69 @@ final class StickyTextView: NSTextView {
 
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
-        DispatchQueue.main.async { [weak self] in self?.smoothCaret.update(animated: false) }
+        DispatchQueue.main.async { [weak self] in
+            self?.smoothCaret.update(animated: false)
+            self?.onFocusChange?()
+        }
         return ok
     }
 
     override func resignFirstResponder() -> Bool {
         let ok = super.resignFirstResponder()
-        DispatchQueue.main.async { [weak self] in self?.smoothCaret.update(animated: false) }
+        DispatchQueue.main.async { [weak self] in
+            self?.smoothCaret.update(animated: false)
+            self?.onFocusChange?()
+        }
         return ok
     }
 
     func applyTheme() {
-        textColor = Style.ink
         insertionPointColor = Style.ink
+        applyStyle()
         smoothCaret.applyTheme()
     }
 
-    func applyFont() { font = Style.font(Self.textSize) }
+    func applyFont() { applyStyle() }
 
     // A stamp is a small surface, so its writing sits a step down the scale
-    // from the page's — same relationship whatever family is chosen.
-    static let textSize: CGFloat = 13
+    // from the page's — same relationship whatever family is chosen. It was 13
+    // on the system's default leading, which read cramped on gold paper; the
+    // phone took it up a step and opened the lines out to 140%, and this
+    // follows it, so a sticky reads the same on either.
+    static let textSize: CGFloat = 14
+    static let leading: CGFloat = 1.4 // line height as a multiple of the type size
+
+    static var attributes: [NSAttributedString.Key: Any] {
+        let font = Style.font(textSize)
+        let line = (textSize * leading).rounded()
+        let p = NSMutableParagraphStyle()
+        p.minimumLineHeight = line
+        p.maximumLineHeight = line
+        return [
+            .font: font, .foregroundColor: Style.ink, .paragraphStyle: p,
+            // A fixed line puts its extra height above the glyphs; this
+            // centres the type in its line instead.
+            .baselineOffset: (line - NSLayoutManager().defaultLineHeight(for: font)) / 2,
+        ]
+    }
+
+    /// The sticky's one style, over everything in it and whatever is typed
+    /// next. A plain-text view keeps one set of attributes for its whole
+    /// string, so this is rewritten wholesale — on a theme, a font, or a new
+    /// string arriving — as an attribute-only edit that leaves the undo stack
+    /// and the selection alone.
+    func applyStyle() {
+        let attrs = Self.attributes
+        font = attrs[.font] as? NSFont
+        textColor = Style.ink
+        defaultParagraphStyle = attrs[.paragraphStyle] as? NSParagraphStyle
+        typingAttributes = attrs
+        if let storage = textStorage, storage.length > 0 {
+            storage.beginEditing()
+            storage.setAttributes(attrs, range: NSRange(location: 0, length: storage.length))
+            storage.endEditing()
+        }
+    }
 }
 
 final class StickyView: NSView, NSTextViewDelegate {
@@ -1316,9 +1360,18 @@ final class StickyView: NSView, NSTextViewDelegate {
     // flourish is a fixed mark in the corner of the paper, so it scales with
     // how wide the paper is and stays where it is put. The system has it
     // hanging 18 units past a 316-unit stamp, which is this 0.058.
-    private static let flourishWidth: CGFloat = 0.4034
-    private static let flourishLeft: CGFloat = 0.6281
+    //
+    // Smaller than the system's 0.40, as on the phone: at that size its blooms
+    // reached up into the last lines of writing. Its right-hand edge stays
+    // where the system puts it (0.6281 + 0.4034), so it shrinks into the
+    // corner rather than away from it, and it keeps the same overhang.
+    private static let flourishWidth: CGFloat = 0.30
+    private static let flourishLeft: CGFloat = 1.0315 - flourishWidth
     private static let flourishOverhang: CGFloat = 0.0575
+    // Clear paper between the last line and the top of the flourish, over and
+    // above the text view's own inset — the phone's 18 plus its 4pt inset,
+    // which is what reads as the writing having finished before the mark.
+    private static let flourishGap: CGFloat = 22
     private static var flourishAspect: CGFloat {
         // the artwork's own, read from the frames rather than written down
         1 / max(AnimatedFlourish.aspect(.sticky), 0.01)
@@ -1334,8 +1387,12 @@ final class StickyView: NSView, NSTextViewDelegate {
 
     // Text never enters the flourish's band. Derived from the flourish rather
     // than fixed at 38, which the artwork outgrew — the words were running
-    // straight over the flowers on any sticky wide enough.
-    private var bottomReserve: CGFloat { max(flourishRect().maxY + 6, 24) }
+    // straight over the flowers on any sticky wide enough. The text view's
+    // bottom inset is part of the gap, so it comes off it here.
+    private var bottomReserve: CGFloat {
+        max(flourishRect().maxY + Self.flourishGap - Self.textInset.height, 24)
+    }
+    static let textInset = NSSize(width: 14, height: 12) // clear of the perforations
     var onTextChange: ((String) -> Void)?
     var onDelete: (() -> Void)?
     var onLayoutNeeded: (() -> Void)?
@@ -1354,19 +1411,19 @@ final class StickyView: NSView, NSTextViewDelegate {
         super.init(frame: .zero)
         if drawsFlourish { startFlourish() }
         noteView.isRichText = false
-        noteView.font = Style.font(StickyTextView.textSize)
-        noteView.textColor = Style.ink
         noteView.insertionPointColor = Style.ink
         noteView.drawsBackground = false
-        noteView.textContainerInset = NSSize(width: 14, height: 12) // clear of the perforations
+        noteView.textContainerInset = Self.textInset
         noteView.textContainer?.widthTracksTextView = true
         noteView.isAutomaticQuoteSubstitutionEnabled = false
         noteView.isAutomaticDashSubstitutionEnabled = false
         noteView.isAutomaticTextReplacementEnabled = false
         noteView.allowsUndo = true
         noteView.string = text
+        noteView.applyStyle()
         noteView.delegate = self
         noteView.menuProvider = { [weak self] in self?.stickyMenu() ?? NSMenu() }
+        noteView.onFocusChange = { [weak self] in self?.onLayoutNeeded?() }
         addSubview(noteView)
     }
 
@@ -1424,8 +1481,9 @@ final class StickyView: NSView, NSTextViewDelegate {
         // The flourish, bottom-right and running off the edge — placed as
         // fractions of the stamp, which is how the system positions it
         // (198.82/316.53 across, 208.64/330.24 down, 127.68 wide on a 316.53
-        // stamp). It reaches past the bottom edge by about 5% and is cut off by
-        // the clip above, which is deliberate in the design.
+        // stamp; drawn a little smaller here, see `flourishWidth`). It reaches
+        // past the bottom edge by about 5% and is cut off by the clip above,
+        // which is deliberate in the design.
         //
         // Width drives the height through the artwork's own aspect rather than
         // both coming from the stamp, so a sticky that isn't the system's
@@ -1539,7 +1597,10 @@ final class StickyView: NSView, NSTextViewDelegate {
     var isEditing: Bool { window?.firstResponder === noteView }
 
     func setText(_ text: String) {
-        if noteView.string != text { noteView.string = text }
+        if noteView.string != text {
+            noteView.string = text
+            noteView.applyStyle()
+        }
     }
 
     // Square by default — height matches width — growing only when the
@@ -1557,7 +1618,7 @@ final class StickyView: NSView, NSTextViewDelegate {
                 width: bounds.width, height: max(bounds.height - bottomReserve, 100))
         }
         lm.ensureLayout(for: tc)
-        return max(lm.usedRect(for: tc).height + 24 + bottomReserve, bounds.width)
+        return max(lm.usedRect(for: tc).height + Self.textInset.height * 2 + bottomReserve, bounds.width)
     }
 
     func focus() { window?.makeFirstResponder(noteView) }
@@ -1596,6 +1657,106 @@ final class SelectionIconView: NSView {
 
     override func mouseDown(with event: NSEvent) { onClick?() }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+}
+
+// MARK: - The stamp's buttons
+
+// Delete and done, under a sticky while it is being written in: the hand-drawn
+// marks from the Figma system (node 330:433), the same ones the phone shows. A
+// sticky that is only being looked at is just the stamp, and the right-click
+// menu still has both — these are for the moment the hand is already on the
+// keyboard and the pointer is nearby.
+//
+// The marks are the system's own vectors, composed into its 60 × 60 tile and
+// rasterised by `Art/render-marks.swift` (see build.sh), so each lands exactly
+// where the frame places it. They ship white and are tinted at draw time, in
+// the ink's muted step — the system draws them in #967654, which is that step
+// (see CLAUDE.md, "Where the system and the ink ladder disagree") — so they
+// follow every theme as the ink does.
+final class StampButton: NSView {
+    enum Kind: String {
+        case delete = "StickyDelete", done = "StickyDone"
+    }
+
+    // The system's tile is 60, and the app scales the system by 16/22 — the
+    // other icon buttons are 44 for the same reason.
+    static let side: CGFloat = 44
+    static var scale: CGFloat { side / 60 }
+    // Wider than the system's 17 (scaled to 12.5), so the two marks read as two
+    // choices rather than a pair.
+    static let gap: CGFloat = 28
+    // Clear air between the stamp and the buttons hanging under it.
+    static let drop: CGFloat = 14
+    // A faint tile behind each mark: a tone, not a colour — black at 6% is a
+    // multiply by 0.94, a soft step down from whatever it sits on in every
+    // theme, much lighter than the system's papered panel tile.
+    static let tileTone = NSColor(white: 0, alpha: 0.06)
+
+    let kind: Kind
+    var onClick: (() -> Void)?
+    private var pressed = false { didSet { needsDisplay = true } }
+
+    init(kind: Kind) {
+        self.kind = kind
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.side, height: Self.side))
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(kind == .delete ? "Delete sticky note" : "Done")
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    // Tinted copies for the current theme only, rebuilt on a change — the same
+    // shape as `StickyView`'s flourish cache, for the same reason.
+    private static var marks: [Kind: NSImage] = [:]
+    private static var marksTheme: String?
+
+    private static func mark(_ kind: Kind) -> NSImage? {
+        if marksTheme != Style.theme.id {
+            marks.removeAll()
+            marksTheme = Style.theme.id
+        }
+        if let hit = marks[kind] { return hit }
+        guard let url = Bundle.main.url(
+                forResource: kind.rawValue, withExtension: "png", subdirectory: "StickyButtons"),
+              let src = NSImage(contentsOf: url) else { return nil }
+        let out = NSImage(size: src.size)
+        out.lockFocus()
+        src.draw(at: .zero, from: .zero, operation: .sourceOver, fraction: 1)
+        Style.ink.withAlphaComponent(0.55).set() // inkMuted
+        NSRect(origin: .zero, size: src.size).fill(using: .sourceAtop)
+        out.unlockFocus()
+        marks[kind] = out
+        return out
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // Under the pointer the mark settles a little, as the phone's does
+        // under the finger.
+        let tile = pressed ? bounds.insetBy(dx: bounds.width * 0.05, dy: bounds.height * 0.05) : bounds
+        Self.tileTone.setFill()
+        let radius = 14 * Self.scale * tile.width / bounds.width
+        NSBezierPath(roundedRect: tile, xRadius: radius, yRadius: radius).fill()
+        Self.mark(kind)?.draw(in: tile, from: .zero, operation: .sourceOver, fraction: 1)
+    }
+
+    // Fires on release inside, like a button, and never takes focus — the
+    // sticky keeps it until the action decides where it goes.
+    override func mouseDown(with event: NSEvent) {
+        pressed = true
+        while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            let inside = bounds.contains(convert(next.locationInWindow, from: nil))
+            if next.type == .leftMouseUp {
+                pressed = false
+                if inside { onClick?() }
+                break
+            }
+            pressed = inside
+        }
+    }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+    func applyTheme() { needsDisplay = true }
 }
 
 // MARK: - Text view
@@ -1695,6 +1856,9 @@ final class PlainTextView: NSTextView {
 
     weak var notesStore: NotesStore?
     private var stickyViews: [UUID: StickyView] = [:]
+    private var washedRanges: [[Int]] = []
+    private let deleteButton = StampButton(kind: .delete)
+    private let doneButton = StampButton(kind: .done)
     private let selectionIcon = SelectionIconView()
     private var annotationsConfigured = false
 
@@ -1704,6 +1868,41 @@ final class PlainTextView: NSTextView {
         selectionIcon.isHidden = true
         selectionIcon.onClick = { [weak self] in self?.createStickyFromSelection() }
         addSubview(selectionIcon)
+        for button in [deleteButton, doneButton] {
+            button.isHidden = true
+            addSubview(button)
+        }
+        // Either way the note gets focus back, with its caret where it was —
+        // what a click in the margin does.
+        deleteButton.onClick = { [weak self] in
+            guard let self, let id = self.editingStickyID else { return }
+            self.window?.makeFirstResponder(self)
+            self.notesStore?.removeSticky(id)
+        }
+        doneButton.onClick = { [weak self] in
+            guard let self else { return }
+            self.window?.makeFirstResponder(self)
+        }
+    }
+
+    private var editingStickyID: UUID? {
+        stickyViews.first(where: { $0.value.isEditing })?.key
+    }
+
+    /// The sticky being written in, if any, gets its buttons hung under it.
+    private func placeStampButtons() {
+        guard let id = editingStickyID, let view = stickyViews[id] else {
+            deleteButton.isHidden = true
+            doneButton.isHidden = true
+            return
+        }
+        let side = StampButton.side
+        let left = view.frame.midX - side - StampButton.gap / 2
+        let top = view.frame.maxY + StampButton.drop
+        deleteButton.frame = NSRect(x: left, y: top, width: side, height: side)
+        doneButton.frame = NSRect(x: left + side + StampButton.gap, y: top, width: side, height: side)
+        deleteButton.isHidden = false
+        doneButton.isHidden = false
     }
 
     // A selection in the left half of the window sends its sticky to the left
@@ -1748,6 +1947,13 @@ final class PlainTextView: NSTextView {
     func syncStickies() {
         guard annotationsConfigured, let store = notesStore else { return }
         let list = store.stickies
+        // The wash is painted with the page, so it has to be asked for again
+        // whenever a sticky is made, deleted or has its words moved under it.
+        let washed = list.map { [$0.start, $0.length] }
+        if washed != washedRanges {
+            washedRanges = washed
+            needsDisplay = true
+        }
         for (id, view) in stickyViews where !list.contains(where: { $0.id == id }) {
             view.removeFromSuperview()
             stickyViews[id] = nil
@@ -1758,7 +1964,6 @@ final class PlainTextView: NSTextView {
         let rightX = bounds.width - Style.sideMargin + 14
         let leftX = Style.sideMargin - width - 14
         var placed: [(view: StickyView, anchorY: CGFloat, isLeft: Bool)] = []
-        let hidden = store.stickiesHidden
         for sticky in list.sorted(by: { $0.start < $1.start }) {
             let view = stickyViews[sticky.id] ?? {
                 let v = StickyView(
@@ -1784,7 +1989,6 @@ final class PlainTextView: NSTextView {
                 return v
             }()
             if !view.isEditing { view.setText(sticky.text) }
-            view.isHidden = hidden
             if let pinX = sticky.pinX, let pinY = sticky.pinY {
                 // pinned: fixed document position, outside the margin flow.
                 // Displayed position clamps to the window so the note can hit
@@ -1824,12 +2028,16 @@ final class PlainTextView: NSTextView {
             let lastBottom = isLeft ? lastBottomLeft : lastBottomRight
             let y = max(anchorY, lastBottom == -.greatestFiniteMagnitude ? anchorY : lastBottom + 6)
             view.frame = NSRect(x: isLeft ? leftX : rightX, y: y, width: width, height: height)
+            // the next sticky down makes room for the buttons hanging under
+            // this one while it is being written in
+            let bottom = y + height + (view.isEditing ? StampButton.drop + StampButton.side : 0)
             if isLeft {
-                lastBottomLeft = y + height
+                lastBottomLeft = bottom
             } else {
-                lastBottomRight = y + height
+                lastBottomRight = bottom
             }
         }
+        placeStampButtons()
     }
 
     override func layout() {
@@ -1869,6 +2077,8 @@ final class PlainTextView: NSTextView {
         smoothCaret.applyTheme()
         selectionIcon.applyTheme()
         stickyViews.values.forEach { $0.applyTheme() }
+        deleteButton.applyTheme()
+        doneButton.applyTheme()
         // the cream dots covering the traffic lights live in the title bar, well
         // outside this view's tree
         if let titlebar = window?.standardWindowButton(.closeButton)?.superview {
@@ -2195,6 +2405,71 @@ final class PlainTextView: NSTextView {
         rect.fill()
         Surface.page.draw(in: enclosingScrollView?.documentVisibleRect ?? bounds)
         drawRuling(in: rect)
+        drawStickyWash(in: rect)
+    }
+
+    // MARK: The sticky wash
+
+    // Words with a sticky attached carry a faint wash of the sticky's colour,
+    // like a highlighter run over them — the stamp in the margin says *that*
+    // there is a note, the wash says *which words* it is about.
+    //
+    // Painted here with the page, beneath the text, and never as a background
+    // attribute in the storage: an attribute would be written into the RTF, and
+    // `normalizeFonts` strips anything like it on the way in anyway. Each band is
+    // sized and placed exactly as the selection's is — the ink box plus air,
+    // centred in the ruled band — so a wash and a selection over the same words
+    // are the same shape, and one drawn over the other reads as one mark.
+    //
+    // A tint, not a fill: at about a quarter the sticky colour is unmistakably
+    // the sticky's, and the ink, the grain and the ruling all read through it.
+    static let stickyWashAlpha: CGFloat = 0.26
+
+    private func drawStickyWash(in rect: NSRect) {
+        guard let store = notesStore, !store.stickies.isEmpty else { return }
+        let bands = store.stickies.flatMap(washBands(for:)).filter { $0.intersects(rect) }
+        guard !bands.isEmpty else { return }
+        stickyNSColor.withAlphaComponent(Self.stickyWashAlpha).setFill()
+        for band in bands {
+            NSBezierPath(roundedRect: band, xRadius: 3, yRadius: 3).fill()
+        }
+    }
+
+    /// One band per line the sticky's words cover. The horizontal extent is
+    /// the words' own on that line; the height and placement are the
+    /// selection's. A sticky whose words have all been deleted has nothing
+    /// left to wash.
+    private func washBands(for sticky: Sticky) -> [NSRect] {
+        guard let lm = layoutManager, let tc = textContainer else { return [] }
+        let text = string as NSString
+        let start = min(max(sticky.start, 0), text.length)
+        let end = min(start + max(sticky.length, 0), text.length)
+        guard end > start else { return [] }
+        let glyphs = lm.glyphRange(
+            forCharacterRange: NSRange(location: start, length: end - start),
+            actualCharacterRange: nil)
+        let origin = textContainerOrigin
+        let height = Style.inkHeight + Style.selectionPadding * 2
+        var bands: [NSRect] = []
+        lm.enumerateLineFragments(forGlyphRange: glyphs) { fragment, _, _, lineGlyphs, _ in
+            var covered = NSIntersectionRange(lineGlyphs, glyphs)
+            // Trailing spaces and the line's newline carry no ink to mark.
+            while covered.length > 0 {
+                let ch = lm.characterIndexForGlyph(at: NSMaxRange(covered) - 1)
+                guard ch < text.length,
+                      let scalar = Unicode.Scalar(text.character(at: ch)),
+                      CharacterSet.whitespacesAndNewlines.contains(scalar) else { break }
+                covered.length -= 1
+            }
+            guard covered.length > 0 else { return }
+            let ink = lm.boundingRect(forGlyphRange: covered, in: tc)
+            let top = fragment.minY + origin.y
+            bands.append(NSRect(
+                x: ink.minX + origin.x - 2,
+                y: Style.ruledCentre(forLineTop: top) - height / 2,
+                width: ink.width + 4, height: height))
+        }
+        return bands
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -2800,15 +3075,6 @@ struct SearchPalette: View {
 
     private var commands: [Command] {
         var out: [Command] = []
-        if showStickyToggle {
-            out.append(Command(
-                id: "sticky",
-                title: store.stickiesHidden ? "show sticky notes" : "hide sticky notes"
-            ) {
-                store.stickiesHidden.toggle()
-                store.searchShown = false
-            })
-        }
         if showOnboardAgain {
             out.append(Command(id: "onboard", title: "onboard again") {
                 store.replayOnboarding()
@@ -2934,8 +3200,10 @@ struct SearchPalette: View {
                 }
             }
 
-            // The sticky toggle shows on an empty query or one about stickies;
             // "onboard again" is properly hidden and needs to be typed for.
+            // There used to be a "hide sticky notes" row here too; it went,
+            // because a sticky is a small mark in the margin now and there is
+            // nothing in the way to hide.
             if !cmds.isEmpty {
                 Rectangle()
                     .fill(panelDividerColor)
@@ -2952,12 +3220,6 @@ struct SearchPalette: View {
         }
         .background(panelColor.papered(.palette))
         .clipShape(RoundedRectangle(cornerRadius: 12))
-    }
-
-    private var showStickyToggle: Bool {
-        guard !store.stickies.isEmpty else { return false }
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return q.isEmpty || "sticky notes".contains(q) || q.contains("sticky")
     }
 
     // Needs three characters and a real prefix of "onboard", so it can't
