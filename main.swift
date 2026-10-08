@@ -404,8 +404,11 @@ struct SearchHit: Identifiable {
 }
 
 // A margin annotation anchored to a character range of the note, not pixels.
-// When pinX/pinY are set the user has dragged it to a fixed spot on the canvas
-// (document coordinates, so it scrolls with the text).
+//
+// `pinX`/`pinY`/`rotation` are from when a sticky could be dragged out onto
+// the page and left there. That went with the crumpled ball — a sticky lives in
+// its margin now, on the Mac as on the phone — but the fields stay, unread, so
+// a file written by an older build still decodes and keeps them when rewritten.
 struct Sticky: Identifiable, Codable, Equatable {
     let id: UUID
     var start: Int
@@ -413,7 +416,7 @@ struct Sticky: Identifiable, Codable, Equatable {
     var text: String
     var pinX: Double?
     var pinY: Double?
-    var rotation: Double? // slight tilt, only while pinned
+    var rotation: Double?
     var left: Bool? // which margin it lives in; nil/false = right
 }
 
@@ -569,33 +572,16 @@ final class NotesStore: ObservableObject {
     // Made during this session, so their flourish can draw itself on once while
     // everything already on the page keeps still. Never cleared: the set of
     // things you have made since launch is small, and the alternative — a flag
-    // wiped on a timer — races the view that is meant to read it.
+    // wiped on a timer — races the view that is meant to read it. (A sticky
+    // needs no such set: its flourish draws itself on every time it is opened.)
     @Published private(set) var freshFolders: Set<String> = []
-    @Published private(set) var freshStickies: Set<UUID> = []
 
     func addSticky(range: NSRange, left: Bool) -> UUID {
         var sticky = Sticky(id: UUID(), start: range.location, length: range.length, text: "")
         sticky.left = left
         stickies.append(sticky)
-        freshStickies.insert(sticky.id)
         scheduleSave()
         return sticky.id
-    }
-
-    func pinSticky(_ id: UUID, x: Double, y: Double, rotation: Double) {
-        guard let i = stickies.firstIndex(where: { $0.id == id }) else { return }
-        stickies[i].pinX = x
-        stickies[i].pinY = y
-        stickies[i].rotation = rotation
-        scheduleSave()
-    }
-
-    func unpinSticky(_ id: UUID) {
-        guard let i = stickies.firstIndex(where: { $0.id == id }) else { return }
-        stickies[i].pinX = nil
-        stickies[i].pinY = nil
-        stickies[i].rotation = nil
-        scheduleSave()
     }
 
     func updateStickyText(_ id: UUID, _ text: String) {
@@ -1140,10 +1126,8 @@ final class SmoothCaret {
 
     func update(animated: Bool) {
         guard configured, let view else { return }
-        if #available(macOS 14.0, *) {
-            view.subviews.compactMap { $0 as? NSTextInsertionIndicator }
-                .forEach { $0.displayMode = .hidden }
-        }
+        view.subviews.compactMap { $0 as? NSTextInsertionIndicator }
+            .forEach { $0.displayMode = .hidden }
         let sel = view.selectedRange()
         guard let window = view.window, window.firstResponder === view,
               view.isEditable, sel.length == 0 else {
@@ -1304,8 +1288,8 @@ final class StickyView: NSView, NSTextViewDelegate {
     // rotation and flip already baked in — see CLAUDE.md on why the transform
     // is baked at build time rather than applied here.
     // The same stop-motion frames the rest of the app uses, at the sticky's
-    // angle. A stamp made during this session draws its flourish on; one loaded
-    // from disk shows the finished mark straight away.
+    // angle. The card draws its flourish on every time it is opened, once the
+    // crumpled sheet has lain flat (see Crumple.swift) — never while it unfolds.
     private static var frames: [NSImage] { AnimatedFlourish.frames(.sticky) }
 
     // The flourish is a single-colour silhouette with a clean alpha channel, so
@@ -1396,20 +1380,20 @@ final class StickyView: NSView, NSTextViewDelegate {
     var onTextChange: ((String) -> Void)?
     var onDelete: (() -> Void)?
     var onLayoutNeeded: (() -> Void)?
-    var onPinned: ((NSPoint, Double) -> Void)?
-    var onUnpin: (() -> Void)?
-    var isPinned: (() -> Bool)?
+    /// The sticky's text gained or lost focus.
+    var onFocusChange: (() -> Void)?
 
-    // Which frame of the flourish is showing. A stamp that is not new starts on
-    // the last one, which is the finished drawing.
+    // Which frame of the flourish is showing, when it shows at all. Until the
+    // card has opened out flat there is no flourish on it; then it draws itself
+    // on from the first frame to the last, which is the finished drawing.
     private var flourishIndex: Int
     private var flourishTimer: Timer?
+    private var showsFlourish = false
 
-    init(id: UUID, text: String, drawsFlourish: Bool = false) {
+    init(id: UUID, text: String) {
         stickyID = id
-        flourishIndex = drawsFlourish ? 0 : max(0, Self.frames.count - 1)
+        flourishIndex = max(0, Self.frames.count - 1)
         super.init(frame: .zero)
-        if drawsFlourish { startFlourish() }
         noteView.isRichText = false
         noteView.insertionPointColor = Style.ink
         noteView.drawsBackground = false
@@ -1423,7 +1407,7 @@ final class StickyView: NSView, NSTextViewDelegate {
         noteView.applyStyle()
         noteView.delegate = self
         noteView.menuProvider = { [weak self] in self?.stickyMenu() ?? NSMenu() }
-        noteView.onFocusChange = { [weak self] in self?.onLayoutNeeded?() }
+        noteView.onFocusChange = { [weak self] in self?.onFocusChange?() }
         addSubview(noteView)
     }
 
@@ -1493,8 +1477,10 @@ final class StickyView: NSView, NSTextViewDelegate {
         // comes out a deep tan rather than a pale cream. Painted opaque it was
         // far too light, and the SVG's fill attribute gives no hint of this: a
         // blend mode doesn't survive that export.
-        Self.flower(flourishIndex, for: Style.theme)?.draw(
-            in: flourishRect(), from: .zero, operation: .multiply, fraction: 1)
+        if showsFlourish {
+            Self.flower(flourishIndex, for: Style.theme)?.draw(
+                in: flourishRect(), from: .zero, operation: .multiply, fraction: 1)
+        }
         NSGraphicsContext.restoreGraphicsState()
     }
 
@@ -1502,6 +1488,50 @@ final class StickyView: NSView, NSTextViewDelegate {
     // sequence: stop-motion is discrete, and interpolating between frames would
     // take the character out of it. Added in .common mode so it keeps going
     // while the page is scrolled.
+    /// Draws the flourish on from its first frame — the card has just opened.
+    func playFlourish() {
+        flourishTimer?.invalidate()
+        showsFlourish = true
+        flourishIndex = 0
+        needsDisplay = true
+        startFlourish()
+    }
+
+    /// The flourish finished, at once — for a picture of the card being put
+    /// away, which has had its flourish all the while it was open.
+    func finishFlourish() {
+        flourishTimer?.invalidate()
+        showsFlourish = true
+        flourishIndex = max(0, Self.frames.count - 1)
+        needsDisplay = true
+    }
+
+    /// The card as it looks now, at twice its points, for the crumpled sheet
+    /// to be printed with. Drawn by the view itself — paper, flourish and
+    /// words — so the hand-over between sheet and card can't be seen. The
+    /// caret is a layer and stays out of it.
+    func picture() -> NSImage {
+        layoutSubtreeIfNeeded()
+        let scale: CGFloat = 2
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int((bounds.width * scale).rounded(.up)),
+            pixelsHigh: Int((bounds.height * scale).rounded(.up)),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        rep.size = bounds.size
+        // A card waiting for its sheet to land is hidden, and a hidden view
+        // draws nothing; shown for the length of this call, which no screen
+        // update can fall inside.
+        let wasHidden = isHidden
+        isHidden = false
+        cacheDisplay(in: bounds, to: rep)
+        isHidden = wasHidden
+        let image = NSImage(size: bounds.size)
+        image.addRepresentation(rep)
+        return image
+    }
+
     private func startFlourish() {
         guard Self.frames.count > 1 else { return }
         let timer = Timer.scheduledTimer(
@@ -1538,60 +1568,25 @@ final class StickyView: NSView, NSTextViewDelegate {
         let delete = NSMenuItem(title: "Delete Note", action: #selector(deleteSticky), keyEquivalent: "")
         delete.target = self
         menu.addItem(delete)
-        if isPinned?() == true {
-            let unpin = NSMenuItem(
-                title: "Return to Margin", action: #selector(unpinSticky), keyEquivalent: "")
-            unpin.target = self
-            menu.addItem(unpin)
-        }
         return menu
     }
 
     @objc private func deleteSticky() { onDelete?() }
-    @objc private func unpinSticky() { onUnpin?() }
 
     override func menu(for event: NSEvent) -> NSMenu? { stickyMenu() }
 
-    // When not editing, the whole sticky is a drag/focus target; while editing
-    // clicks go to the text as usual.
+    // When not editing, a click anywhere on the stamp puts the caret in it;
+    // while editing, clicks go to the text as usual. It used to be draggable
+    // out onto the page, too — that went with the crumpled ball: a sticky put
+    // away is a ball beside its line, and one out on the page would have no
+    // line to go back to.
     override func hitTest(_ point: NSPoint) -> NSView? {
         let view = super.hitTest(point)
         if view != nil, !isEditing { return self }
         return view
     }
 
-    // Drag to pin anywhere on the canvas; a plain click focuses for typing.
-    override func mouseDown(with event: NSEvent) {
-        let startWindow = event.locationInWindow
-        let startOrigin = frame.origin
-        var dragged = false
-        while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
-            if next.type == .leftMouseUp { break }
-            let dx = next.locationInWindow.x - startWindow.x
-            let dy = next.locationInWindow.y - startWindow.y
-            if !dragged, abs(dx) > 3 || abs(dy) > 3 {
-                dragged = true
-                // the tilt happens as the note leaves for the canvas — rolled
-                // once, on its first ever drag, and kept from then on
-                if isPinned?() != true, frameCenterRotation == 0 {
-                    frameCenterRotation = CGFloat(Double.random(in: -2...2))
-                }
-            }
-            if dragged {
-                // superview is flipped, window coords are not; keep the note
-                // fully inside the canvas while dragging
-                let maxX = max(8, (superview?.bounds.width ?? .greatestFiniteMagnitude) - frame.width - 8)
-                let x = min(max(startOrigin.x + dx, 8), maxX)
-                let y = max(startOrigin.y - dy, 8)
-                frame.origin = NSPoint(x: x, y: y)
-            }
-        }
-        if dragged {
-            onPinned?(frame.origin, Double(frameCenterRotation))
-        } else {
-            focus()
-        }
-    }
+    override func mouseDown(with event: NSEvent) { focus() }
 
     var noteText: String { noteView.string }
     var isEditing: Bool { window?.firstResponder === noteView }
@@ -1628,12 +1623,9 @@ final class StickyView: NSView, NSTextViewDelegate {
         onLayoutNeeded?()
     }
 
-    // A sticky that was never typed into vanishes when clicked away from.
-    func textDidEndEditing(_ notification: Notification) {
-        if noteView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            DispatchQueue.main.async { [weak self] in self?.onDelete?() }
-        }
-    }
+    // A sticky that was never typed into vanishes when clicked away from —
+    // the page decides that as it puts the card away (`putAwaySticky`), so
+    // that it crumples to nothing rather than back into a ball.
 }
 
 // The flat square that appears above an active selection.
@@ -1657,6 +1649,70 @@ final class SelectionIconView: NSView {
 
     override func mouseDown(with event: NSEvent) { onClick?() }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+}
+
+// MARK: - The sticky put away
+
+// A sticky, put away, is a small crumpled ball of sticky paper in its margin,
+// beside the line it is anchored to — the same crumpled sheet the opening
+// starts from (Crumple.swift), rendered once per mood. Clicking it opens it out
+// into the card.
+//
+// The view is larger than the ball it draws, so the pointer can find it.
+final class StickyBallView: NSView {
+    let stickyID: UUID
+    var onClick: (() -> Void)?
+    var onDelete: (() -> Void)?
+
+    static let hitSize = NSSize(width: 30, height: 40)
+
+    init(id: UUID) {
+        stickyID = id
+        super.init(frame: NSRect(origin: .zero, size: Self.hitSize))
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel("Sticky note")
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    // The ball for the current mood. A blank card crumpled is the same for
+    // every sticky, so there is one picture, rebuilt only when the mood
+    // changes — the font doesn't reach it, since there are no words on it.
+    private static var ball: NSImage?
+    private static var ballTheme: String?
+
+    private static func current() -> NSImage? {
+        if ballTheme != Style.theme.id {
+            ballTheme = Style.theme.id
+            let side = PlainTextView.cardWidth
+            ball = CrumpleArt.ball(from: PlainTextView.blankCard(size: NSSize(width: side, height: side)),
+                                   scale: 2)
+        }
+        return ball
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ball = Self.current() else { return }
+        ball.draw(in: NSRect(x: (bounds.width - ball.size.width) / 2,
+                             y: (bounds.height - ball.size.height) / 2,
+                             width: ball.size.width, height: ball.size.height))
+    }
+
+    override func mouseDown(with event: NSEvent) { onClick?() }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu()
+        let delete = NSMenuItem(title: "Delete Note", action: #selector(deleteSticky), keyEquivalent: "")
+        delete.target = self
+        menu.addItem(delete)
+        return menu
+    }
+
+    @objc private func deleteSticky() { onDelete?() }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+    func applyTheme() { needsDisplay = true }
 }
 
 // MARK: - The stamp's buttons
@@ -1853,14 +1909,37 @@ enum ArrowZones {
 
 final class PlainTextView: NSTextView {
     // MARK: Sticky annotations
+    //
+    // A sticky put away is a crumpled ball in its margin, beside the line it is
+    // anchored to; clicked, it lifts and opens out flat into its card, there in
+    // the margin; clicked away from, it crushes back into the ball. One is out
+    // at a time. The fold itself is Crumple.swift's — this is where the page
+    // decides what is out, where the ball and the card sit, and when the real
+    // card is on screen.
 
     weak var notesStore: NotesStore?
-    private var stickyViews: [UUID: StickyView] = [:]
+    private var balls: [UUID: StickyBallView] = [:]
+    /// The card that is out, or on its way back in. Made fresh for every
+    /// opening, so its flourish draws itself on every time.
+    private var card: StickyView?
+    /// The sticky that is out — opening, or open. Nil once it is being put away.
+    private var openID: UUID?
+    private lazy var crumple: CrumpleDirector = {
+        let director = CrumpleDirector()
+        director.onCardLanded = { [weak self] id in self?.cardLanded(id) }
+        director.onCardLeft = { [weak self] id in self?.cardLeft(id) }
+        director.onFlight = { [weak self] in self?.showFlight() }
+        return director
+    }()
     private var washedRanges: [[Int]] = []
     private let deleteButton = StampButton(kind: .delete)
     private let doneButton = StampButton(kind: .done)
     private let selectionIcon = SelectionIconView()
     private var annotationsConfigured = false
+
+    static let cardWidth: CGFloat = 172
+
+    private var reducesMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     func configureAnnotations() {
         guard !annotationsConfigured else { return }
@@ -1875,30 +1954,40 @@ final class PlainTextView: NSTextView {
         // Either way the note gets focus back, with its caret where it was —
         // what a click in the margin does.
         deleteButton.onClick = { [weak self] in
-            guard let self, let id = self.editingStickyID else { return }
+            guard let self, let id = self.openID else { return }
+            self.putAwaySticky(id, deleted: true)
             self.window?.makeFirstResponder(self)
-            self.notesStore?.removeSticky(id)
         }
         doneButton.onClick = { [weak self] in
-            guard let self else { return }
+            guard let self else { return } // losing focus puts it away
             self.window?.makeFirstResponder(self)
+        }
+        // The sheet is drawn over everything else on the page, cards included.
+        addSubview(crumple.view)
+        // Compiled now, a beat after the page is up, not on the first click.
+        DispatchQueue.main.async { [weak self] in
+            self?.crumple.prepare(paper: Self.blankCard(size: NSSize(width: 40, height: 40)))
         }
     }
 
-    private var editingStickyID: UUID? {
-        stickyViews.first(where: { $0.value.isEditing })?.key
+    /// The back of a card, and the paper a ball is crumpled from: a stamp with
+    /// nothing on it.
+    static func blankCard(size: NSSize) -> NSImage {
+        let view = StickyView(id: UUID(), text: "")
+        view.frame = NSRect(origin: .zero, size: size)
+        return view.picture()
     }
 
-    /// The sticky being written in, if any, gets its buttons hung under it.
+    /// The open card gets its buttons hung under it while it is written in.
     private func placeStampButtons() {
-        guard let id = editingStickyID, let view = stickyViews[id] else {
+        guard let card, card.stickyID == openID, !card.isHidden, card.isEditing else {
             deleteButton.isHidden = true
             doneButton.isHidden = true
             return
         }
         let side = StampButton.side
-        let left = view.frame.midX - side - StampButton.gap / 2
-        let top = view.frame.maxY + StampButton.drop
+        let left = card.frame.midX - side - StampButton.gap / 2
+        let top = card.frame.maxY + StampButton.drop
         deleteButton.frame = NSRect(x: left, y: top, width: side, height: side)
         doneButton.frame = NSRect(x: left + side + StampButton.gap, y: top, width: side, height: side)
         deleteButton.isHidden = false
@@ -1930,6 +2019,8 @@ final class PlainTextView: NSTextView {
         selectionIcon.isHidden = false
     }
 
+    // A sticky just made has nothing to read yet: it comes out of its ball
+    // straight to writing.
     private func createStickyFromSelection() {
         guard let store = notesStore else { return }
         let sel = selectedRange()
@@ -1939,11 +2030,144 @@ final class PlainTextView: NSTextView {
         let id = store.addSticky(range: sel, left: selectionTargetsLeft(rect))
         selectionIcon.isHidden = true
         syncStickies()
-        stickyViews[id]?.focus()
+        openSticky(id)
     }
 
-    // Rebuild/reposition the margin notes from their anchors. Called on every
-    // layout pass, edit, and model change, so notes track reflow and resize.
+    // MARK: Taking a sticky out, and putting it away
+
+    func openSticky(_ id: UUID) {
+        guard let sticky = notesStore?.stickies.first(where: { $0.id == id }) else { return }
+        if openID == id {
+            card?.focus()
+            return
+        }
+        // One out at a time: whatever else is out goes straight back.
+        if let current = openID { putAwaySticky(current, animated: false) }
+        dropCard()
+
+        let view = StickyView(id: id, text: sticky.text)
+        view.onTextChange = { [weak self] text in self?.notesStore?.updateStickyText(id, text) }
+        view.onDelete = { [weak self] in
+            guard let self else { return }
+            self.putAwaySticky(id, deleted: true)
+            self.window?.makeFirstResponder(self)
+        }
+        view.onLayoutNeeded = { [weak self] in self?.syncStickies() }
+        view.onFocusChange = { [weak self] in self?.cardFocusChanged(id) }
+        view.isHidden = true // until the sheet has opened out flat in its place
+        addSubview(view, positioned: .below, relativeTo: crumple.view)
+        card = view
+        openID = id
+        syncStickies() // places the card
+
+        guard !reducesMotion, let mark = ballCentre(id) else {
+            cardLanded(id)
+            return
+        }
+        // Off with the words already on it, and without its flourish, which
+        // draws itself on only once the card is flat.
+        crumple.open(id, face: view.picture(), back: Self.blankCard(size: view.frame.size),
+                     frame: view.frame, mark: mark, stage: stageFrame(card: view.frame, mark: mark))
+    }
+
+    /// Puts `id`'s card away into its ball — or, if it was deleted or never
+    /// written in, crumples it to nothing where it is and deletes the sticky.
+    func putAwaySticky(_ id: UUID, deleted: Bool = false, animated: Bool = true) {
+        guard openID == id, let card, card.stickyID == id else { return }
+        openID = nil
+        let text = card.noteText
+        let gone = deleted || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if gone {
+            notesStore?.removeSticky(id)
+        } else {
+            notesStore?.updateStickyText(id, text)
+        }
+        syncStickies()
+        let mark = gone ? nil : ballCentre(id)
+        if !animated || reducesMotion {
+            if !animated { crumple.reset() }
+            dropCard()
+            syncStickies()
+            return
+        }
+        if card.isHidden {
+            // Still opening: the sheet turns back, and there is no card to
+            // hand over from.
+            crumple.close(id, face: card.picture(), back: Self.blankCard(size: card.frame.size),
+                          frame: card.frame, mark: mark, stage: stageFrame(card: card.frame, mark: mark))
+            dropCard()
+            return
+        }
+        card.finishFlourish()
+        crumple.close(id, face: card.picture(), back: Self.blankCard(size: card.frame.size),
+                      frame: card.frame, mark: mark, stage: stageFrame(card: card.frame, mark: mark))
+        placeStampButtons()
+    }
+
+    /// The sheet has opened out flat: the real card takes its place, draws its
+    /// flourish on, and takes the caret.
+    private func cardLanded(_ id: UUID) {
+        guard openID == id, let card, card.stickyID == id else { return }
+        card.isHidden = false
+        card.playFlourish()
+        card.focus()
+        syncStickies()
+    }
+
+    /// The sheet has taken over from a card going back into its ball.
+    private func cardLeft(_ id: UUID) {
+        guard let card, card.stickyID == id, openID != id else { return }
+        dropCard()
+    }
+
+    private func dropCard() {
+        card?.removeFromSuperview()
+        card = nil
+        placeStampButtons()
+    }
+
+    /// Clicked away from, the card goes back into its ball.
+    private func cardFocusChanged(_ id: UUID) {
+        if let card, card.stickyID == id, openID == id, !card.isHidden, !card.isEditing {
+            putAwaySticky(id)
+        }
+        syncStickies()
+    }
+
+    /// The ball of the sticky that is out is the one in the air, not the one
+    /// in the margin.
+    private func showFlight() {
+        for (id, ball) in balls {
+            ball.isHidden = id == crumple.flyingID || (id == openID && reducesMotion)
+        }
+    }
+
+    private func ballCentre(_ id: UUID) -> CGPoint? {
+        guard let ball = balls[id] else { return nil }
+        return CGPoint(x: ball.frame.midX, y: ball.frame.midY)
+    }
+
+    /// Room on the page for the sheet's whole flight — the ball, the card, the
+    /// arc between and the tumble on the way.
+    private func stageFrame(card: NSRect, mark: CGPoint?) -> NSRect {
+        var area = card
+        if let mark { area = area.union(NSRect(x: mark.x, y: mark.y, width: 0, height: 0)) }
+        return area.insetBy(dx: -110, dy: -110).integral
+    }
+
+    // MARK: Placing balls and the card
+
+    /// Where line `top`'s ball sits for a sticky in this margin: just past the
+    /// end of the ruling, where the rule runs out into the margin — close
+    /// enough to read as belonging to the line.
+    private func ballX(left: Bool) -> CGFloat {
+        let reach = Style.ruleOverhang + 18
+        return left ? Style.sideMargin - reach : bounds.width - Style.sideMargin + reach
+    }
+
+    // Rebuild/reposition the balls, and the card that is out, from their
+    // anchors. Called on every layout pass, edit, and model change, so they
+    // track reflow and resize.
     func syncStickies() {
         guard annotationsConfigured, let store = notesStore else { return }
         let list = store.stickies
@@ -1954,89 +2178,59 @@ final class PlainTextView: NSTextView {
             washedRanges = washed
             needsDisplay = true
         }
-        for (id, view) in stickyViews where !list.contains(where: { $0.id == id }) {
-            view.removeFromSuperview()
-            stickyViews[id] = nil
+        for (id, ball) in balls where !list.contains(where: { $0.id == id }) {
+            ball.removeFromSuperview()
+            balls[id] = nil
         }
-        guard let lm = layoutManager, let tc = textContainer else { return }
+        // A different note loaded, or the sticky gone from under it: whatever
+        // was out goes, without a fold.
+        if let id = openID, !list.contains(where: { $0.id == id }) {
+            openID = nil
+            crumple.reset()
+            dropCard()
+        }
+        guard let lm = layoutManager else { return }
         let textLength = (string as NSString).length
-        let width: CGFloat = 172
-        let rightX = bounds.width - Style.sideMargin + 14
-        let leftX = Style.sideMargin - width - 14
-        var placed: [(view: StickyView, anchorY: CGFloat, isLeft: Bool)] = []
+        let size = StickyBallView.hitSize
+        var perLine: [CGFloat: Int] = [:]
         for sticky in list.sorted(by: { $0.start < $1.start }) {
-            let view = stickyViews[sticky.id] ?? {
-                let v = StickyView(
-                    id: sticky.id, text: sticky.text,
-                    drawsFlourish: self.notesStore?.freshStickies.contains(sticky.id) ?? false)
-                v.onTextChange = { [weak self] text in
-                    self?.notesStore?.updateStickyText(sticky.id, text)
-                }
-                v.onDelete = { [weak self] in
-                    self?.notesStore?.removeSticky(sticky.id)
-                }
-                v.onLayoutNeeded = { [weak self] in self?.syncStickies() }
-                v.onPinned = { [weak self] origin, rotation in
-                    self?.notesStore?.pinSticky(
-                        sticky.id, x: origin.x, y: origin.y, rotation: rotation)
-                }
-                v.onUnpin = { [weak self] in self?.notesStore?.unpinSticky(sticky.id) }
-                v.isPinned = { [weak self] in
-                    self?.notesStore?.stickies.first(where: { $0.id == sticky.id })?.pinX != nil
-                }
-                addSubview(v)
-                stickyViews[sticky.id] = v
-                return v
+            let ball = balls[sticky.id] ?? {
+                let b = StickyBallView(id: sticky.id)
+                b.onClick = { [weak self] in self?.openSticky(sticky.id) }
+                b.onDelete = { [weak self] in self?.notesStore?.removeSticky(sticky.id) }
+                addSubview(b, positioned: .below, relativeTo: crumple.view)
+                balls[sticky.id] = b
+                return b
             }()
-            if !view.isEditing { view.setText(sticky.text) }
-            if let pinX = sticky.pinX, let pinY = sticky.pinY {
-                // pinned: fixed document position, outside the margin flow.
-                // Displayed position clamps to the window so the note can hit
-                // the wall and ride it, without losing its remembered spot.
-                view.frameCenterRotation = 0 // frames are only reliable unrotated
-                view.frame.size.width = width
-                let height = view.desiredHeight
-                let maxX = max(8, bounds.width - width - 8)
-                let x = min(max(CGFloat(pinX), 8), maxX)
-                let y = max(CGFloat(pinY), 8)
-                view.frame = NSRect(x: x, y: y, width: width, height: height)
-                view.frameCenterRotation = CGFloat(sticky.rotation ?? 0)
-                continue
+            var top = textContainerOrigin.y
+            if lm.numberOfGlyphs > 0 {
+                let glyph = lm.glyphIndexForCharacter(at: max(0, min(sticky.start, textLength - 1)))
+                top += lm.lineFragmentRect(forGlyphAt: min(glyph, lm.numberOfGlyphs - 1),
+                                           effectiveRange: nil).minY
             }
-            let loc = max(0, min(sticky.start, textLength))
-            let len = max(0, min(sticky.length, textLength - loc))
-            let glyphRange = lm.glyphRange(
-                forCharacterRange: NSRange(location: loc, length: len), actualCharacterRange: nil)
-            var anchorY = textContainerInset.height
-            if glyphRange.length > 0 {
-                anchorY = lm.boundingRect(forGlyphRange: glyphRange, in: tc).minY
-                    + textContainerInset.height
-            } else if lm.numberOfGlyphs > 0 {
-                let glyphIndex = min(glyphRange.location, lm.numberOfGlyphs - 1)
-                anchorY = lm.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil).minY
-                    + textContainerInset.height
-            }
-            placed.append((view, anchorY, sticky.left == true))
-        }
-        // nudge overlapping notes downward in anchor order, per margin
-        var lastBottomLeft: CGFloat = -.greatestFiniteMagnitude
-        var lastBottomRight: CGFloat = -.greatestFiniteMagnitude
-        for (view, anchorY, isLeft) in placed {
-            view.frameCenterRotation = 0 // margin notes sit straight
-            view.frame.size.width = width // set width before measuring wrap height
-            let height = view.desiredHeight
-            let lastBottom = isLeft ? lastBottomLeft : lastBottomRight
-            let y = max(anchorY, lastBottom == -.greatestFiniteMagnitude ? anchorY : lastBottom + 6)
-            view.frame = NSRect(x: isLeft ? leftX : rightX, y: y, width: width, height: height)
-            // the next sticky down makes room for the buttons hanging under
-            // this one while it is being written in
-            let bottom = y + height + (view.isEditing ? StampButton.drop + StampButton.side : 0)
-            if isLeft {
-                lastBottomLeft = bottom
-            } else {
-                lastBottomRight = bottom
+            let left = sticky.left == true
+            // Two stickies on one line stack like stamps on an envelope, each a
+            // little lower and further out than the last, rather than covering
+            // one another.
+            let stacked = CGFloat(perLine[top, default: 0])
+            perLine[top, default: 0] += 1
+            let centre = CGPoint(x: ballX(left: left) + (left ? -2 : 2) * stacked,
+                                 y: Style.ruledCentre(forLineTop: top) + 6 * stacked)
+            ball.frame = NSRect(x: centre.x - size.width / 2, y: centre.y - size.height / 2,
+                                width: size.width, height: size.height)
+
+            // The card that is out opens where its ball was: its top level with
+            // the ball's, across the margin the ball sits in.
+            if let card, card.stickyID == sticky.id, openID == sticky.id {
+                if !card.isEditing { card.setText(sticky.text) }
+                let width = Self.cardWidth
+                card.frame.size.width = width // set width before measuring wrap height
+                let x = left ? Style.sideMargin - width - 14 : bounds.width - Style.sideMargin + 14
+                let y = max(8, centre.y - CGFloat(CrumpleSheet.ballDiameter) / 2)
+                card.frame = NSRect(x: x, y: y, width: width, height: card.desiredHeight)
             }
         }
+        showFlight()
         placeStampButtons()
     }
 
@@ -2076,7 +2270,8 @@ final class PlainTextView: NSTextView {
         selectedTextAttributes = [.backgroundColor: Style.selection]
         smoothCaret.applyTheme()
         selectionIcon.applyTheme()
-        stickyViews.values.forEach { $0.applyTheme() }
+        card?.applyTheme()
+        balls.values.forEach { $0.applyTheme() }
         deleteButton.applyTheme()
         doneButton.applyTheme()
         // the cream dots covering the traffic lights live in the title bar, well
@@ -2094,7 +2289,7 @@ final class PlainTextView: NSTextView {
     // this fan-out a sticky already on screen kept its old family until the
     // note was closed and reopened.
     func applyFont() {
-        stickyViews.values.forEach { $0.applyFont() }
+        card?.applyFont()
     }
 
     // MARK: Smooth caret (MS Word-style glide)
@@ -3101,7 +3296,7 @@ struct SearchPalette: View {
         .arrowCursorZone()
         .onAppear { focused = true }
         .onExitCommand { store.searchShown = false }
-        .onChange(of: query) { _ in selected = 0 }
+        .onChange(of: query) { _, _ in selected = 0 }
     }
 
     private func queryCard(_ results: [SearchHit], _ cmds: [Command]) -> some View {
@@ -3193,7 +3388,7 @@ struct SearchPalette: View {
                         .padding(.vertical, 8)
                     }
                     .frame(height: listHeight(results))
-                    .onChange(of: selected) { new in
+                    .onChange(of: selected) { _, new in
                         // command rows live outside the scroll view
                         if new < results.count { proxy.scrollTo(new) }
                     }
@@ -3518,7 +3713,7 @@ struct ContentView: View {
         .tint(brownInk)
         .background(WindowConfigurator())
         .frame(minWidth: 640, minHeight: 400)
-        .onChange(of: showNotes) { open in
+        .onChange(of: showNotes) { _, open in
             if open {
                 panelLocation = store.currentFolder
                 store.panelContext = .some(panelLocation)
@@ -3528,10 +3723,10 @@ struct ContentView: View {
                 renamingFolder = nil
             }
         }
-        .onChange(of: panelLocation) { location in
+        .onChange(of: panelLocation) { _, location in
             if showNotes { store.panelContext = .some(location) }
         }
-        .onChange(of: store.hiddenShown) { shown in
+        .onChange(of: store.hiddenShown) { _, shown in
             // seed the field when settings opens, commit it when they leave
             if shown {
                 nameDraft = store.displayName

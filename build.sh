@@ -1,10 +1,11 @@
 #!/bin/zsh
 # Builds JUI.app next to this script.
 #
-# Universal (Apple Silicon + Intel) with a macOS 13 floor, so the zip opens on
-# any reasonably recent Mac. An arm64-only or macOS-14-only build fails to
-# launch elsewhere with a bare "the file cannot be opened", which looks like a
-# signing problem but isn't.
+# Universal (Apple Silicon + Intel) with a macOS 26 floor. The floor was 13
+# until the sticky rework, which leans on SceneKit and AppKit API that 13 lacks;
+# 26 is also the last macOS that runs on Intel, so the x86_64 slice still earns
+# its place. An arm64-only build fails to launch on an Intel Mac with a bare
+# "the file cannot be opened", which looks like a signing problem but isn't.
 set -e
 cd "$(dirname "$0")"
 
@@ -26,7 +27,7 @@ ICON="AppIconRe.icns" # copied in as AppIcon.icns; main ships plain AppIcon.icns
 
 APP="$NAME.app"
 ZIP="$NAME.zip"
-DEPLOY_TARGET="13"
+DEPLOY_TARGET="26"
 
 rm -rf "$APP" # start clean so no stale resource breaks the signature seal
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -174,7 +175,7 @@ fi
 for arch in arm64 x86_64; do
   swiftc -O -parse-as-library -swift-version 5 \
     -target "$arch-apple-macos$DEPLOY_TARGET" \
-    main.swift Theme.swift Texture.swift Onboarding.swift -o "/tmp/jui-$arch"
+    main.swift Theme.swift Texture.swift Onboarding.swift Crumple.swift -o "/tmp/jui-$arch"
 done
 lipo -create /tmp/jui-arm64 /tmp/jui-x86_64 -output "$APP/Contents/MacOS/$NAME"
 rm -f /tmp/jui-arm64 /tmp/jui-x86_64
