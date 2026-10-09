@@ -250,6 +250,21 @@ A plain writing pad for Juilee. Built July 16–17, 2026.
     around it. Delete lives on the right-click menu of the card and the ball;
     a sticky emptied and put away still crumples to nothing.
 
+16. **⌘K and the notes tray, from the phone; folder names in full.** The
+    phone's search cards became the page's own paper a shade deeper — the
+    sheet stock at the page's grain, with the panel colour multiplied in at
+    70% so the grain shows through — and stopped fading as they came and
+    went, travelling instead far enough to be wholly off the screen. Both
+    come back here, and the notes tray gets the same treatment: the same
+    paper as the ⌘K cards, and it rises solid from below the window and
+    sinks back the same way, on the same 0.6s curve the palette drops in on.
+
+    Folder tiles lose their flourish, as they did on the phone, and the
+    room it kept above the name goes to the name: it wraps onto as many
+    lines as the tile holds and is truncated only past that, where it used
+    to be cut to one line. The tile is the same size, so the grid doesn't
+    move. The folder frame set no longer ships.
+
 ## Minor updates & polish
 
 - **New folder without the context menu**: the folder grid ends with a `+`

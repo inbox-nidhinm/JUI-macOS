@@ -108,16 +108,16 @@ enum Surface {
     case sticky      // #F7C82D sticky
     case folderPanel // #ECDBBE panel — the pane the tiles sit on
     case folderTile  // #F3E4CA folderBase — the tiles themselves
-    case palette     // #ECDBBE panel — the ⌘K cards
+    case palette     // sheet — the ⌘K cards and the notes tray: the page's own paper
     case button      // #ECDBBE panel — a raised icon button
     case envelope    // #EBCEA3 envelope — onboarding
     case letter      // #FFFAF3 letterSheet — onboarding
 
     var paper: Paper {
         switch self {
-        case .page: return .sheet
+        case .page, .palette: return .sheet
         case .sticky: return .sticky
-        case .folderPanel, .folderTile, .palette, .button,
+        case .folderPanel, .folderTile, .button,
              .envelope, .letter: return .ui
         }
     }
@@ -137,19 +137,15 @@ enum Surface {
         // the whole reason a tile reads as sitting *on* the pane: 21 levels of
         // separation in the system against the 7 that one shared value gave.
         case .folderTile: return 0.49
-        // #E7D7BE against #ECDBBE — 0.979. Light, because the card's texture
-        // shows as flecks rather than as tooth; the fit above is what carries
-        // it, not the strength.
-        //
-        // This one briefly went to 0.75 on a sheet base, reading a 95th
-        // percentile one level above the panel colour as proof of a lighter
-        // ground. It was a JPEG artefact. The card's channel ratios settle it
-        // properly — 1 : 0.931 : 0.823, against panel's 1 : 0.928 : 0.805 and
-        // sheet's 1 : 0.949 : 0.858 — and a neutral multiply preserves those
-        // ratios exactly, so they identify the base whatever the strength.
-        // Sheet is the flatter of the two, which is why building on it turned
-        // the card grey-green beside the warm panels.
-        case .palette: return 0.30
+        // As the page. The ⌘K cards — and the notes tray, which is made the same
+        // way — are the page's own paper a shade deeper, not a panel stock: the
+        // reader asked for "the same background texture as the notes with a
+        // very slight darker shade" on the phone, and this is that, brought
+        // back. The shade is the panel colour multiplied in at 70%
+        // (`deepPaper`), so the grain darkens with the paper rather than being
+        // washed out by a layer of colour over it. (It was the UI stock at 0.30
+        // on a panel base, read off the system's card.)
+        case .palette: return 0.50
         // The system draws this at 0.873 — 98%, the heaviest surface in it.
         // Deliberately lighter here: at full weight the raised button read as a
         // dark slug in the corner of the page, and it is the one surface that
@@ -183,13 +179,16 @@ enum Surface {
         // Covering shrinks the grain twelvefold on a ~170pt stamp and the paper
         // reads as flat colour. 0.5 puts one image pixel on one Retina pixel.
         case .sticky: return .window(0.5)
-        // The ⌘K card is the interesting one. Its median sits close to its own
-        // base — 0.979 — but its darkest tenth reaches 0.911, and that gap is
-        // the signature of a light ground carrying sparse dark flecks rather
-        // than of uniform tooth. Covering would average those flecks into a
-        // flat wash, taking the whole card down with them; a crop keeps them
-        // their own size and leaves the ground alone.
-        case .palette: return .window(0.5)
+        // The page's paper at the page's own grain: the scale the photograph
+        // is drawn at to cover the window, held for a card a fraction of its
+        // size — covering just the card would blow the grain up, and the card
+        // would read as a different stock from the page around it.
+        case .palette:
+            guard let image = Paper.sheet.image else { return .cover }
+            let window = NSApp.keyWindow?.contentView?.bounds.size
+                ?? NSApp.windows.first?.contentView?.bounds.size
+                ?? NSScreen.main?.frame.size ?? CGSize(width: 1200, height: 800)
+            return .window(Paper.Fit.cover.scale(covering: window, image: image.size))
         }
     }
 

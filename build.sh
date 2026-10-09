@@ -140,21 +140,21 @@ fi
 ANIM="Art/Vectors/FlourishAnimation.svg"
 if [ -f "$ANIM" ]; then
   if [ ! -f .animcache/corner/frame-30.png ] || [ "$ANIM" -nt .animcache/corner/frame-30.png ]; then
-    rm -rf .animcache && mkdir -p .animcache/svg .animcache/corner .animcache/folder .animcache/sticky
+    rm -rf .animcache && mkdir -p .animcache/svg .animcache/corner .animcache/sticky
     python3 Art/split-frames.py "$ANIM" .animcache/svg > /dev/null
-    # Three sets from one source. The corner mark is upright; the folder tile
-    # and the sticky carry the same drawing rotated, at the angles their static
-    # artwork was baked with — so animating them changes nothing about how they
-    # look, it only lets them draw themselves on.
+    # Two sets from one source. The corner mark is upright; the sticky carries
+    # the same drawing rotated, at the angle its static artwork was baked with —
+    # so animating it changes nothing about how it looks, it only lets it draw
+    # itself on. (There was a third, for folder tiles, rotated 134.07°; the
+    # tiles carry no flourish now.)
     swift Art/render-frames.swift .animcache/svg .animcache/corner 405 0
-    swift Art/render-frames.swift .animcache/svg .animcache/folder 405 134.07
     swift Art/render-frames.swift .animcache/svg .animcache/sticky 405 147.88
   fi
-  for set in corner folder sticky; do
+  for set in corner sticky; do
     mkdir -p "$APP/Contents/Resources/FlourishFrames/$set"
     cp .animcache/$set/frame-*.png "$APP/Contents/Resources/FlourishFrames/$set/"
   done
-  echo "Flourish: shipped 3 x $(ls -1 .animcache/corner/frame-*.png | wc -l | tr -d ' ') frames ($(du -sh "$APP/Contents/Resources/FlourishFrames" | cut -f1))"
+  echo "Flourish: shipped 2 x $(ls -1 .animcache/corner/frame-*.png | wc -l | tr -d ' ') frames ($(du -sh "$APP/Contents/Resources/FlourishFrames" | cut -f1))"
 fi
 
 for arch in arm64 x86_64; do

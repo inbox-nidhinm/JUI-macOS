@@ -56,6 +56,22 @@ func houseFont(_ size: CGFloat) -> Font { Font(Style.font(size) as CTFont) }
 // it cannot invert the way a fixed colour can.
 var panelDividerColor: Color { Color.black.opacity(0.12) }
 
+// What the ⌘K cards and the notes tray are made of: the page's own paper, a
+// shade deeper. The sheet colour with the page's grain (`Surface.palette`),
+// and the mood's panel colour *multiplied* into it at 70% — a multiply darkens
+// the grain along with the paper, where a plain layer of colour laid over it
+// washed the grain out. Grouped, so the multiply reaches the card and not the
+// page behind it. From the phone, where the reader asked for exactly this.
+//
+// Use it as a background, never an overlay: an overlay would multiply the rows
+// and their ink into the card too.
+var deepPaper: some View {
+    sheetColor
+        .papered(.palette)
+        .overlay(Rectangle().fill(panelColor.opacity(0.7)).blendMode(.multiply))
+        .compositingGroup()
+}
+
 // A flourish that draws itself on, from the stop-motion frames.
 //
 // Three sets ship: the same drawing at the three angles the static artwork used
@@ -66,7 +82,7 @@ var panelDividerColor: Color { Color.black.opacity(0.12) }
 // Frames are white silhouettes tinted at draw time, so one set serves all six
 // themes.
 enum FlourishSet: String {
-    case corner, folder, sticky
+    case corner, sticky // folder tiles carry none any more
 }
 
 struct AnimatedFlourish: View {
@@ -178,15 +194,13 @@ struct AnimatedFlourish: View {
 
 var folderBaseColor: Color { Color(nsColor: Style.theme.folderBase) }
 
-// The air a folder tile keeps above its name.
+// A folder tile's height, which the folder grid is laid out on.
 //
-// It used to be occupied: a small botanical sprig sat there in the flow, as a
-// PNG. In the system the mark is a watermark behind the whole tile instead, so
-// it moved to the background and these hold the space it left — which is why
-// the numbers are the sprig's and not something rounder. The tile's height is
-// computed from them, so they set the grid the folder grid is laid out on.
+// The numbers are a sprig's: one sat above the name, then became a flourish
+// watermarked behind the tile, and both are gone now. The height stayed, and
+// is the room a name has to wrap into — the name takes all of it and is cut
+// short only past it.
 let folderMarkHeight: CGFloat = 32
-let folderMarkWidth: CGFloat = 32 * (181.0 / 271.0)
 let folderMarkGap: CGFloat = 14 // breathing room between the mark and the name
 let folderTitleHeight: CGFloat = 16
 let folderCellPadding: CGFloat = 9
@@ -583,13 +597,6 @@ final class NotesStore: ObservableObject {
         return (try? JSONDecoder().decode([Sticky].self, from: data)) ?? []
     }
 
-    // Made during this session, so their flourish can draw itself on once while
-    // everything already on the page keeps still. Never cleared: the set of
-    // things you have made since launch is small, and the alternative — a flag
-    // wiped on a timer — races the view that is meant to read it. (A sticky
-    // needs no such set: its flourish draws itself on every time it is opened.)
-    @Published private(set) var freshFolders: Set<String> = []
-
     func addSticky(range: NSRange, left: Bool) -> UUID {
         var sticky = Sticky(id: UUID(), start: range.location, length: range.length, text: "")
         sticky.left = left
@@ -690,7 +697,6 @@ final class NotesStore: ObservableObject {
         try? fm.createDirectory(
             at: dir.appendingPathComponent(candidate, isDirectory: true),
             withIntermediateDirectories: true)
-        freshFolders.insert(candidate)
         refreshList()
         return candidate
     }
@@ -3496,7 +3502,7 @@ struct SearchPalette: View {
         // Papered on the background rather than over the whole view: an overlay
         // would multiply the rows and their highlights too, printing ink that
         // is meant to sit *on* the card into it instead.
-        .background(panelColor.papered(.palette))
+        .background(deepPaper)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
@@ -3579,7 +3585,7 @@ struct SearchPalette: View {
                 .padding(.vertical, 8)
             }
         }
-        .background(panelColor.papered(.palette))
+        .background(deepPaper)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
@@ -3637,6 +3643,18 @@ struct SearchPalette: View {
 struct ContentView: View {
     @ObservedObject var store: NotesStore
     @State private var showNotes = false
+    /// The ⌘K cards' height, top padding included — how far they travel.
+    @State private var searchHeight: CGFloat = 300
+
+    // How the ⌘K cards and the notes tray come and go: solid all the way,
+    // travelling far enough to be wholly off the window before they are
+    // removed, on a strong ease-out. Moved by their height alone, or faded as
+    // they went, they vanished abruptly at the edge — the phone found this
+    // first ("don't reduce the opacity", "it should go farther").
+    static let arrival = Animation.timingCurve(0, 0, 0.35, 1, duration: 0.6)
+    static let travelMargin: CGFloat = 24
+    // The tray sits this far above the window's foot (see its padding).
+    private static let trayLift: CGFloat = 10 + 44 + 19
     @State private var flourishHovering = false
     @State private var hoveredID: String?
     @State private var panelLocation: String? // nil = root, else drilled-in folder
@@ -3790,7 +3808,7 @@ struct ContentView: View {
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        withAnimation(.easeOut(duration: 0.15)) { showNotes = false }
+                        withAnimation(Self.arrival) { showNotes = false }
                     }
 
                 notesPanel
@@ -3800,8 +3818,11 @@ struct ContentView: View {
                     // 19 here — between the folder grid and them. This was 48,
                     // which cleared the old 30pt buttons and stopped clearing
                     // them the moment they were resized from the system.
-                    .padding(.bottom, 10 + 44 + 19)
-                    .transition(.opacity)
+                    .padding(.bottom, Self.trayLift)
+                    // Rises from below the window and sinks back the way ⌘K
+                    // drops in from above: solid, and far enough to be gone
+                    // past the edge, passing under the buttons on its way.
+                    .transition(.offset(y: panelHeight + Self.trayLift + Self.travelMargin))
             }
 
             if !store.hiddenShown, !store.onboardingShown {
@@ -3814,11 +3835,11 @@ struct ContentView: View {
                         .padding(.trailing, 17)
                     IconButton(systemName: "text.justify.left", help: "Past notes",
                                active: showNotes) {
-                        withAnimation(.easeOut(duration: 0.15)) { showNotes.toggle() }
+                        withAnimation(Self.arrival) { showNotes.toggle() }
                     }
                     IconButton(systemName: "plus", help: "New note (⌘N)") {
                         store.newNote()
-                        withAnimation(.easeOut(duration: 0.15)) { showNotes = false }
+                        withAnimation(Self.arrival) { showNotes = false }
                     }
                 }
                 .arrowCursorZone()
@@ -3864,17 +3885,23 @@ struct ContentView: View {
                         .transition(.opacity)
 
                     // Drops in from above the window and withdraws the same
-                    // way. `move(edge: .top)` carries it clear of its own
-                    // frame, and the stack ignores the safe area, so it starts
-                    // and ends off the top of the screen rather than appearing
-                    // to slide out of the title bar.
+                    // way, solid all the way — a card arriving, not one fading
+                    // in. It travels its own measured height (the padding
+                    // above it included) plus a margin, so it is wholly off
+                    // the top before it is removed; the stack ignores the safe
+                    // area, so that is off the window, not into the title bar.
                     SearchPalette(store: store)
                         .padding(.top, 110)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .background(GeometryReader { geo in
+                            Color.clear
+                                .onAppear { searchHeight = geo.size.height }
+                                .onChange(of: geo.size.height) { _, h in searchHeight = h }
+                        })
+                        .transition(.offset(y: -(searchHeight + Self.travelMargin)))
                 }
             }
             .ignoresSafeArea()
-            .animation(.timingCurve(0, 0, 0.35, 1, duration: 0.6), value: store.searchShown)
+            .animation(Self.arrival, value: store.searchShown)
         }
         .tint(brownInk)
         .background(WindowConfigurator())
@@ -4060,7 +4087,9 @@ struct ContentView: View {
         }
         .frame(width: 260)
         .frame(height: panelHeight)
-        .background(panelColor.papered(.folderPanel))
+        // The same paper as the ⌘K cards — the page's own, a shade deeper —
+        // so the two things that rise over the page are made of one stuff.
+        .background(deepPaper)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .arrowCursorZone()
         .contextMenu {
@@ -4130,7 +4159,7 @@ struct ContentView: View {
     private func noteRow(_ note: NoteMeta) -> some View {
         Button {
             store.open(note.id)
-            withAnimation(.easeOut(duration: 0.15)) { showNotes = false }
+            withAnimation(Self.arrival) { showNotes = false }
         } label: {
             HStack(spacing: 8) {
                 Text(note.title)
@@ -4187,16 +4216,15 @@ struct ContentView: View {
             guard renamingFolder != folder else { return }
             panelLocation = folder
         } label: {
-            // Name along the bottom, air above it. The flourish used to sit
-            // here as a small sprig in the flow; in the system it is a
-            // watermark behind the whole tile, so it moved to the background
-            // and this holds the space it used to occupy — the cell's height is
-            // computed from these metrics.
+            // The name, sitting on the tile's foot, and the whole of it: it
+            // wraps onto as many lines as the tile has room for and is cut
+            // short only past that. The tile carries no flourish — that space
+            // used to be held clear above the name for one; the one flourish
+            // on screen is the corner's, as on the phone. The tile's height is
+            // unchanged (`folderCellHeight`), so the grid doesn't move.
             VStack(alignment: .leading, spacing: 0) {
-                Color.clear
-                    .frame(width: folderMarkWidth, height: folderMarkHeight)
-                Spacer(minLength: folderMarkGap)
-                HStack(spacing: 6) {
+                Spacer(minLength: 0)
+                HStack(alignment: .bottom, spacing: 6) {
                     if renamingFolder == folder {
                         HouseField(
                             text: $folderDraft, size: 13, alpha: 0.85,
@@ -4210,21 +4238,24 @@ struct ContentView: View {
                             .onAppear { folderFieldFocused = true }
                             .onDisappear { folderFieldFocused = false }
                     } else {
+                        // No line limit: the frame below is the limit, and
+                        // the text truncates only when it reaches it.
                         Text(folder)
                             .font(houseFont(13))
                             .foregroundStyle(inkStrong)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .bottomLeading)
                         Circle()
                             .fill(store.currentFolder == folder ? openDotColor : Color.clear)
                             .frame(width: 6, height: 6)
+                            .padding(.bottom, 5) // level with the last line's letters
                     }
                 }
             }
             .frame(maxWidth: .infinity,
                    minHeight: folderCellHeight - folderCellPadding * 2,
                    maxHeight: folderCellHeight - folderCellPadding * 2,
-                   alignment: .leading)
+                   alignment: .bottomLeading)
             .padding(.vertical, folderCellPadding)
             .padding(.horizontal, 10)
             // Folder cards cross-fade rather than sliding a shared box around:
@@ -4233,36 +4264,6 @@ struct ContentView: View {
             .background(
                 (panelHighlight == .folder(folder) ? sheetColor : folderBaseColor)
                     .papered(.folderTile)
-                    // The flourish is placed as fractions of the tile, the way
-                    // the system places it (77.22/187 across, 132.84 wide on a
-                    // 187 tile), and runs off the right and bottom edges — the
-                    // clip below is what the design intends, not an accident.
-                    .overlay(alignment: .topLeading) {
-                        GeometryReader { geo in
-                            let w = geo.size.width * 0.7104
-                            AnimatedFlourish(
-                                set: .folder,
-                                tint: panelColor,
-                                // A folder made in this session draws its mark
-                                // on. Everything already on the shelf keeps
-                                // still — otherwise opening the panel would set
-                                // the whole grid going at once, which reads as
-                                // a glitch rather than as a welcome.
-                                play: store.freshFolders.contains(folder)
-                                    ? .onceInSession(key: "folder-" + folder)
-                                    : .never)
-                                .frame(width: w,
-                                       height: w / AnimatedFlourish.aspect(.folder))
-                                .offset(x: geo.size.width * 0.4130,
-                                        y: geo.size.height * 0.0036)
-                                // drawn *through* the tile rather than onto it —
-                                // see the note on the sticky's flourish
-                                .blendMode(.multiply)
-                        }
-                    }
-                    // scopes that multiply to the tile, so it darkens the card
-                    // it belongs to and not the panel behind it
-                    .compositingGroup()
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             )
             .contentShape(Rectangle())

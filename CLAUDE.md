@@ -26,7 +26,7 @@ grep for `for arch in`.
 
 **Art ships as directories, not as a list of filenames.** `Contents/Resources`
 gets `AppIcon.icns`, `Textures/` (three greyscale JPEGs, derived from
-`Art/Textures`) and `FlourishFrames/{corner,folder,sticky}/` (the stop-motion
+`Art/Textures`) and `FlourishFrames/{corner,sticky}/` (the stop-motion
 frames, derived from `Art/Vectors`). Both are copied wholesale, which is
 deliberate: the per-asset loop that used to sit here did nothing when someone
 added a file and forgot to name it, and on this branch drawing nothing and
@@ -612,10 +612,22 @@ there before changing a number.
 **A new raised surface goes on the list.** In SwiftUI the shape is
 `colour.papered(.surface).clipShape(…)` — colour, then paper, then clip, in that
 order, or the grain squares off behind the corner radius. The settings cards were
-the last three flat ones in the app and now take `.folderPanel`, since they are
-the same thing the notes panel is: a panel-toned pane raised off the page. Their
-inner wells stay flat, because a well is a hole in the card rather than another
-surface on top of it — the same call the ⌘K result rows make.
+the last three flat ones in the app and take `.folderPanel`: a panel-toned pane
+raised off the page. Their inner wells stay flat, because a well is a hole in the
+card rather than another surface on top of it — the same call the ⌘K result rows
+make.
+
+**The ⌘K cards and the notes tray are `deepPaper`**, not a panel stock: the
+page's own paper (`Surface.palette` is the sheet stock at the page's strength
+and the page's grain) with the panel colour *multiplied* in at 70%, so they read
+as the page a shade deeper with the grain coming through. It came from the
+phone, where the reader asked for it. Use it as a background, never an overlay.
+
+**Both come and go solid**, never fading: ⌘K drops in from above the window and
+the tray rises from below it, each travelling its own measured height plus
+`travelMargin`, so it is wholly past the edge before it is removed, on
+`ContentView.arrival` (0, 0, 0.35, 1 over 0.6s). Faded, or moved by its height
+alone, a card vanished abruptly at the edge. Only the ⌘K scrim fades.
 
 The AppKit half is `Surface.draw(in:)`, and it has to be drawn into the same
 context as the colour it is texturing: a multiply can only see what is already in
@@ -726,10 +738,12 @@ The four static PNGs this paragraph used to describe — `Flourish`,
 `StickyFlower`, `FolderSprig`, `OnboardingLogo`, plus the later `StickyFlourish`
 and `FolderFlourish` — are gone. The animation replaced every one of them and
 nothing had read them for some time; they were still being copied into every
-bundle. The one thing they left behind is `folderMarkWidth`/`Height`/`Gap` in
-`main.swift`, which hold the air above a folder's name — the mark moved to the
-tile's background, so those are the sprig's old metrics keeping its space, and
-the tile height is computed from them.
+bundle. The one thing they left behind is `folderMarkHeight`/`Gap` in
+`main.swift`: the sprig's old metrics, which the tile height is still computed
+from. **Folder tiles carry no flourish now** — not the sprig, and not the
+watermark that replaced it — so that height is the room a folder's name has to
+wrap into: the name takes all of it, on as many lines as fit, and is truncated
+only past that. The folder frame set went from the build with it.
 
 ### Palette (cream — the other five are the same structure, hue-rotated)
 
