@@ -23,7 +23,8 @@ cd "$(dirname "$0")"
 NAME="re-JUI"
 BUNDLE_ID="com.nidhin.jui.re"
 COUNTER="build-number-re"
-ICON="AppIconRe.icns" # copied in as AppIcon.icns; main ships plain AppIcon.icns
+# (There was a fourth, ICON, for a fixed black icon that told this build apart
+# in the Dock. The icon follows the mood now, as on the phone — see below.)
 
 APP="$NAME.app"
 ZIP="$NAME.zip"
@@ -61,10 +62,33 @@ done
 # file and forgets to name it, and on this branch drawing nothing and drawing a
 # very subtle grain look identical.
 
-# The icon is copied separately because this branch ships a different one. It
-# still lands as AppIcon.icns, which is what CFBundleIconFile in Info.plist
-# names — so the source plist stays describing the real app here too.
-cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
+# The icon follows the mood: six icons from the Figma system (node 331:539), the
+# same artwork as the iPhone app, in Art/AppIcons. Art/render-icons.swift sets
+# each on the macOS icon grid (an 824 tile on a clear 1024 canvas, with the
+# shadow macOS icons carry) through WebKit; all six ship in AppIcons/ for the
+# app to switch between (`AppIcon` in Theme.swift), and cream becomes the
+# bundle's own AppIcon.icns — what CFBundleIconFile names, and what Finder shows
+# before the app has ever run. Cached on the sources' modification time.
+ICONS="Art/AppIcons"
+mkdir -p .iconcache
+if [ ! -f .iconcache/AppIcon.icns ] \
+   || [ -n "$(find "$ICONS" -newer .iconcache/AppIcon.icns -name '*.svg')" ] \
+   || [ Art/render-icons.swift -nt .iconcache/AppIcon.icns ]; then
+  swift Art/render-icons.swift "$ICONS" .iconcache > /dev/null
+  rm -rf .iconcache/AppIcon.iconset && mkdir -p .iconcache/AppIcon.iconset
+  for size in 16 32 128 256 512; do
+    sips -z $size $size .iconcache/cream.png \
+      --out ".iconcache/AppIcon.iconset/icon_${size}x${size}.png" > /dev/null
+    double=$(( size * 2 ))
+    sips -z $double $double .iconcache/cream.png \
+      --out ".iconcache/AppIcon.iconset/icon_${size}x${size}@2x.png" > /dev/null
+  done
+  iconutil -c icns .iconcache/AppIcon.iconset -o .iconcache/AppIcon.icns
+  echo "Icons: rebuilt 6 moods + AppIcon.icns"
+fi
+cp .iconcache/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+mkdir -p "$APP/Contents/Resources/AppIcons"
+cp .iconcache/{cream,mint,sky,coral,lilac,orchid}.png "$APP/Contents/Resources/AppIcons/"
 
 # Textures ship as a directory rather than by name. The rebuild adds and drops
 # these constantly, and the old per-asset loop above fails silently when someone

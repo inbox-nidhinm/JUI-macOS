@@ -15,7 +15,7 @@ No Xcode project. Five Swift files compiled directly by `swiftc`:
 |---|---|---|
 | `main.swift` | ~4200 | Everything: tokens, store, text engine, stickies, panel, search, settings |
 | `Crumple.swift` | ~560 | The crumpled-ball sticky: the SceneKit sheet, its creases, `CrumpleDirector` |
-| `Theme.swift` | ~290 | The six palettes, the `AppIcon` recolour, the mood-dot `ThemePicker` |
+| `Theme.swift` | ~200 | The six palettes, the mood-following `AppIcon`, the mood-dot `ThemePicker` |
 | `Texture.swift` | ~240 | The paper: which stock each surface takes, at what grain and strength |
 | `Onboarding.swift` | ~510 | First-run envelope flow only |
 | `build.sh` | | Universal build + ad-hoc sign + verify |
@@ -384,7 +384,9 @@ Three values at the top of `build.sh` are the entire divergence:
 | `NAME` (app, executable, zip) | `JUI` | `re-JUI` |
 | `BUNDLE_ID` | `com.nidhin.jui` | `com.nidhin.jui.re` |
 | `COUNTER` | `build-number` | `build-number-re` |
-| `ICON` | `AppIcon.icns` | `AppIconRe.icns` |
+
+(There was a fourth, `ICON`, for a fixed black `AppIconRe.icns`. The icon follows
+the mood now — see below — and is built from `Art/AppIcons`.)
 
 They are stamped into the bundle at build time with `PlistBuddy`, alongside the
 `CFBundleVersion` stamp that was already there. **The source `Info.plist` is
@@ -499,33 +501,27 @@ fifth alpha step to a ladder that was deliberately collapsed to four.
 That is why `paragraphSpacing` is exactly one pitch (a break skips one rule) and
 the bullet gap is exactly zero (list items take consecutive rules).
 
-### The icon here is fixed, and that switches a whole mechanism off
+### The icon follows the mood — six designed icons, as on the iPhone
 
-`AppIconRe.icns` is the cream flourish (`#F2E3C9`) on pure black — full-bleed
-1024², the same single-image structure the original `.icns` uses, and it is
-copied in *as* `AppIcon.icns` so `CFBundleIconFile` needs no change.
+Six icons from the Figma system (node 331:539), one per mood, in
+`Art/AppIcons/<mood>.svg` — the same files the iPhone app builds from.
+`Art/render-icons.swift` (run by `build.sh`, cached in `.iconcache`) sets each on
+the macOS icon grid through WebKit: the design's rounded tile at 824 on a clear
+1024 canvas, with a soft shadow. **The shape, inset and shadow have to be in the
+picture** — `applicationIconImage` and a bundle's custom icon are both drawn
+exactly as handed over, with no system mask. The iPhone flattens the same
+artwork onto a full square instead, because iOS rounds icons itself. Each SVG
+goes in as its own `<img>`, since the six share element ids that would collide
+inline on one page.
 
-It deliberately **does not follow the theme**. Two reasons: the two builds have
-to be told apart at a glance in the Dock, ⌘-Tab and Finder whatever mood either
-is set to; and a dark icon is not something the recolour could produce anyway,
-since it maps the artwork's two tones onto two *theme* colours and is therefore
-light by construction.
+All six ship in `Resources/AppIcons/`, and cream also becomes the bundle's
+`AppIcon.icns` (`iconutil`, from the rendered PNG), so Finder shows it before the
+app has ever run. `AppIcon.apply` runs at launch and on every `setTheme`.
 
-So `AppIcon.followsTheme` (`Theme.swift`) is `false` here, and `apply` and
-`refreshDockTile` return immediately. Everything the main branch's write-up
-describes — the persisted `Icon\r` override, the broken strict code seal, the
-Dock restart on quit — **does not happen on this branch**, and the strict
-verification `build.sh` runs stays passing on an installed copy. `prepare()`
-still runs, harmlessly: it clears any override a previous run left behind.
-
-The call sites in `main.swift` are untouched, so re-enabling is one line.
-
-**That leaves `recoloured`, `persist`, `image(for:)`, the cache and `pristine`
-unreachable on this branch, and they are kept deliberately.** They are live code
-on `main`, and this branch is meant to merge *forward* into it — deleting them
-here would make the merge quietly drop the themed Dock icon, which is a feature
-rather than drift. It is the one region of unreachable code in the repo that is
-supposed to be there; everything else the audit found has been removed.
+This replaced, in turn, a fixed black icon (`AppIconRe.icns`, so the rebuild
+couldn't be mistaken for the shipping JUI in the Dock) and, on main, a recolour
+of the original gold icon worked out pixel by pixel. Designed icons need
+neither; the recolour, `prepare()`, `pristine` and `followsTheme` are gone.
 
 The scratch vault at `~/Library/Application Support/re-JUI/Notes` was seeded
 with a **copy** of the real notes, so the redesign is judged against real prose
@@ -675,40 +671,17 @@ rewritten as an attribute-only edit on the existing storage — selection, scrol
 position and undo all survive. Bumping `docVersion` would reload the document
 and throw the caret to the end of the note.
 
-**The Dock icon follows the theme, but only while running.** `AppIcon` in
-`Theme.swift` maps the icon's two tones — a gold field, a cream motif — onto
-`sticky` and `sheet`, applied via `NSApplication.applicationIconImage` in
-`PlainEditorApp.init()` and on every `setTheme`, cached per theme.
-
-Two things about it are load-bearing, and both were bugs first:
-
-1. **It recolours `NSWorkspace.icon(forFile: bundlePath)`, not `AppIcon.icns`.**
-   The raw asset is a full-bleed opaque square; macOS insets it to the
-   824-in-1024 grid and masks it to the system squircle before Finder ever shows
-   it. But `applicationIconImage` is drawn exactly as handed over — so
-   recolouring the raw file gave a Dock tile that was hard-cornered and visibly
-   larger than its neighbours. Starting from the composed icon inherits the right
-   geometry for whatever macOS is running, with no shape maths here to go stale.
-2. **The two endpoint tones are measured off the bitmap, not hardcoded.** The
-   `.icns` is colour-converted on its way into a `deviceRGB` bitmap, so the gold
-   arrives as `#F7C82D`, not the `#F9D039` the file contains. Constants taken
-   from the file left the motif a few percent short of `sheet`.
-
-Premultiplication matters too: undo it before reading a pixel's tone and redo it
-after, or the soft squircle edge reads as near-gold and picks up a bright fringe.
+**The Dock icon follows the theme.** `AppIcon` in `Theme.swift` sets the mood's
+icon (see "The icon follows the mood") as `NSApplication.applicationIconImage`
+in `PlainEditorApp.init()` and on every `setTheme`.
 
 **And it persists past quit**, via `NSWorkspace.setIcon(_:forFile:)` on the
 bundle — the same thing pasting into a Get Info window does, and the mechanism
 Granola's write-up settled on. `applicationIconImage` alone dies with the
-process, so Finder (and a pinned Dock tile) reverted to the gold default.
+process, so Finder (and a pinned Dock tile) reverted to the bundle's own icon.
 
-Three things hold this together:
+Two things hold this together:
 
-- **`prepare()` must run before any themed icon is applied, exactly once.** It
-  clears the previous run's override and captures the pristine artwork. Without
-  it the recolour would read its own output as the source and compound —
-  catastrophically, not subtly, since lilac's field and motif differ by 2 in blue
-  where the original gold and cream differ by 172.
 - **Cream removes the override rather than writing a copy of the default.** That
   leaves no stale file, and restores the code seal exactly.
 - **The seal really does break for the other five.** `codesign --verify --deep

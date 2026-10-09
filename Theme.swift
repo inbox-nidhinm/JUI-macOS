@@ -102,175 +102,69 @@ enum Themes {
     }
 }
 
-// Recolours the Dock icon to match the theme.
+// The app's icon follows the mood, as the iPhone app's does: six icons from the
+// Figma system (node 331:539), each drawn in its mood's own colours — the same
+// artwork, set on the macOS icon grid by build.sh into Resources/AppIcons.
+// Cream is also the bundle's AppIcon.icns, so it is what Finder shows before
+// the app has ever run.
 //
-// AppIcon.icns is a full-bleed gold field with a cream floral motif — exactly two
-// tones, plus the anti-aliased pixels between them. So it maps cleanly: the gold
-// becomes the theme's sticky, the cream becomes its sheet. Each pixel's mix is
-// read off its blue channel, which is where the two source tones sit furthest
-// apart (57 vs 224) and varies monotonically between them, so soft edges survive.
-//
-// IMPORTANT: this changes the icon of the *running* app only — Dock, ⌘-Tab, and
-// the About panel. The icon Finder and Launchpad show comes from AppIcon.icns
-// inside the bundle, which the code signature seals. Rewriting it would break
-// that seal and the app would refuse to launch with "a sealed resource is missing
-// or invalid", so there is deliberately no attempt to.
+// This replaces two older arrangements: a fixed black icon that told this
+// build apart from the shipping JUI, and before it a recolour of the original
+// gold icon worked out pixel by pixel. Designed icons need neither.
 enum AppIcon {
-    // On the re-JUI branch the icon is a *fixed* mark — the cream flourish on
-    // black, shipped as AppIconRe.icns — so the rebuild is never mistaken for
-    // the real app in the Dock, the ⌘-Tab strip or Finder, whatever mood either
-    // one is set to. A dark icon also can't be produced by the recolour below,
-    // which maps the artwork's two tones onto two *theme* colours and so is
-    // light by construction.
-    //
-    // That makes the recolour, the persisted override and the Dock restart dead
-    // weight, so they are switched off here at the root rather than left half
-    // running. The call sites in main.swift are untouched, which keeps this a
-    // one-line decision to reverse.
-    static let followsTheme = false
-
     private static var cache: [String: NSImage] = [:]
-    private static var pristine: NSImage?
 
-    // Must run before any themed icon is applied, and exactly once.
-    //
-    // Clearing the override first is what keeps this correct across launches.
-    // The recolour derives its two endpoint tones from the source image, so if
-    // the source were a previously-persisted themed icon the remap would
-    // compound — and it would do so catastrophically rather than subtly, because
-    // lilac's field and motif differ by 2 in blue where the original gold and
-    // cream differ by 172. Reading the pristine icon means every theme is always
-    // computed from the artwork as drawn.
-    static func prepare() {
-        let path = Bundle.main.bundlePath
-        NSWorkspace.shared.setIcon(nil, forFile: path, options: [])
-        let base = NSWorkspace.shared.icon(forFile: path)
-        pristine = base.size.width > 0 ? base : nil
+    private static func image(for theme: Theme) -> NSImage? {
+        if let hit = cache[theme.id] { return hit }
+        guard let url = Bundle.main.url(
+                forResource: theme.id, withExtension: "png", subdirectory: "AppIcons"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        cache[theme.id] = image
+        return image
     }
 
+    /// The icon for `theme`, everywhere: the running app at once, and the
+    /// bundle so it stays after quitting.
     static func apply(_ theme: Theme) {
-        // Doing nothing leaves the bundle's own icon in place, which is exactly
-        // what a fixed mark wants.
-        guard followsTheme else { return }
         guard let image = image(for: theme) else { return }
-        NSApplication.shared.applicationIconImage = image // the running app
+        NSApplication.shared.applicationIconImage = image // Dock, ⌘-Tab, About
         persist(theme, image) // Finder, Launchpad, and the Dock after quitting
     }
 
     // Writes the icon onto the bundle itself — the same thing pasting into a Get
-    // Info window does, and the mechanism Granola settled on for this exact
-    // problem. applicationIconImage alone only lasts as long as the process, so
-    // quitting reverted the tile to the gold default.
+    // Info window does. applicationIconImage alone only lasts as long as the
+    // process, so quitting reverted the tile to the bundle's own icon.
     //
-    // The cost, measured rather than assumed: this writes an `Icon\r` at the
+    // The icon is drawn exactly as handed over, which is why the pictures carry
+    // the macOS shape, inset and shadow (see Art/render-icons.swift).
+    //
+    // The cost, measured on the main branch: this writes an `Icon\r` at the
     // bundle root, after which `codesign --verify --deep --strict` fails with
     // "resource fork, Finder information, or similar detritus not allowed".
     // Plain `codesign --verify` still passes and the app still launches. It only
     // ever affects an installed copy that has been run — the build output and the
     // shipped zip are untouched, since build.sh rebuilds the bundle from scratch.
-    // Deleting the `Icon\r` restores the seal.
+    // Cream is the bundle's own icon, so it removes the override rather than
+    // writing a copy over it, which also restores the seal.
     private static func persist(_ theme: Theme, _ image: NSImage) {
-        let path = Bundle.main.bundlePath
-        // cream is the artwork as drawn, so drop the override rather than
-        // writing a copy of the default over the top of it
         let icon: NSImage? = theme.id == Themes.cream.id ? nil : image
-        NSWorkspace.shared.setIcon(icon, forFile: path, options: [])
+        NSWorkspace.shared.setIcon(icon, forFile: Bundle.main.bundlePath, options: [])
     }
 
     // The Dock keeps its own cache of a *pinned* tile's icon and only re-reads it
-    // when it restarts. Measured: touching the bundle and re-registering it with
-    // LaunchServices (`lsregister -f`) both leave the stale tile in place;
-    // relaunching the Dock is the only thing that clears it. launchd brings it
-    // straight back, so this costs a brief flash and nothing else.
+    // when it restarts. Measured on the main branch: touching the bundle and
+    // re-registering it with LaunchServices (`lsregister -f`) both leave the
+    // stale tile in place; relaunching the Dock is the only thing that clears it.
+    // launchd brings it straight back, so this costs a brief flash.
     //
-    // Called on quit rather than on the theme change, and only when the theme
-    // actually changed during the session. While the app is running the tile
-    // draws applicationIconImage and is already correct — the stale cache is only
-    // visible once the app is gone — so this way the flash never interrupts
-    // anyone mid-use, and quitting without changing mood leaves the Dock alone.
+    // Called on quit, and only when the mood changed during the session. While
+    // the app runs the tile draws applicationIconImage and is already right, so
+    // this way the flash never interrupts anyone mid-use.
     static func refreshDockTile() {
-        // The tile never changes here, so restarting the Dock on quit would be
-        // a visible flash bought for nothing.
-        guard followsTheme else { return }
         for dock in NSRunningApplication.runningApplications(
             withBundleIdentifier: "com.apple.dock") {
             dock.terminate()
         }
-    }
-
-    private static func image(for theme: Theme) -> NSImage? {
-        if let hit = cache[theme.id] { return hit }
-        guard let base = pristine else { return nil }
-        // cream is what the artwork was drawn in; leave it untouched
-        let result = theme.id == Themes.cream.id
-            ? base
-            : (recoloured(base, field: theme.sticky, motif: theme.sheet) ?? base)
-        cache[theme.id] = result
-        return result
-    }
-
-    // Recolours the bundle's icon *as macOS composes it*, not the raw AppIcon.icns.
-    //
-    // That distinction is the whole fix. The raw asset is a full-bleed opaque
-    // square; macOS insets it to the 824-in-1024 icon grid and masks it to the
-    // system squircle before Finder ever shows it. But applicationIconImage is
-    // drawn exactly as handed over, with no inset and no mask — so recolouring the
-    // raw file produced a Dock tile that was both hard-cornered and visibly larger
-    // than its neighbours. Starting from the composed icon inherits the correct
-    // geometry for whatever macOS is running, with no shape maths here to go stale.
-    private static func recoloured(_ base: NSImage, field: NSColor, motif: NSColor) -> NSImage? {
-        let side = 512 // ample for the Dock, which tops out around 256pt @2x
-        guard let rep = NSBitmapImageRep(
-                bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side,
-                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                colorSpaceName: .deviceRGB, bytesPerRow: side * 4, bitsPerPixel: 32),
-              let context = NSGraphicsContext(bitmapImageRep: rep)
-        else { return nil }
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = context
-        base.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
-        NSGraphicsContext.restoreGraphicsState()
-
-        guard let data = rep.bitmapData,
-              let f = field.usingColorSpace(.sRGB),
-              let m = motif.usingColorSpace(.sRGB) else { return nil }
-        let from = (f.redComponent * 255, f.greenComponent * 255, f.blueComponent * 255)
-        let to = (m.redComponent * 255, m.greenComponent * 255, m.blueComponent * 255)
-
-        // Calibrate the two endpoints from the pixels actually in this bitmap
-        // rather than from constants. The .icns is colour-converted on its way in
-        // here, so the tones measured in the file are not the ones that arrive —
-        // the gold reads #F7C82D, not the #F9D039 the file contains. Reading the
-        // range off the opaque interior is immune to that, and to the artwork
-        // being redrawn later.
-        var lo = 255.0, hi = 0.0
-        for i in stride(from: 0, to: side * side * 4, by: 4) where data[i + 3] > 250 {
-            let blue = Double(data[i + 2])
-            lo = min(lo, blue)
-            hi = max(hi, blue)
-        }
-        // A narrow spread means blue isn't separating this artwork's two tones, so
-        // the remap would amplify noise instead of mapping cleanly. Fail back to
-        // the untinted icon rather than producing something wrong.
-        guard hi - lo > 30 else { return nil }
-        let span = hi - lo
-        func byte(_ value: Double) -> UInt8 { UInt8(min(max(value, 0), 255)) }
-
-        for i in stride(from: 0, to: side * side * 4, by: 4) {
-            let a = Double(data[i + 3])
-            guard a > 0 else { continue } // outside the squircle; leave it clear
-            // CoreGraphics hands back premultiplied RGB, so undo that before
-            // reading the tone and redo it after — otherwise the soft squircle
-            // edge reads as near-gold and picks up a bright fringe.
-            let t = min(max((Double(data[i + 2]) * (255 / a) - lo) / span, 0), 1)
-            let unmul = a / 255
-            data[i] = byte((from.0 + (to.0 - from.0) * t) * unmul)
-            data[i + 1] = byte((from.1 + (to.1 - from.1) * t) * unmul)
-            data[i + 2] = byte((from.2 + (to.2 - from.2) * t) * unmul)
-        }
-        let out = NSImage(size: NSSize(width: side, height: side))
-        out.addRepresentation(rep)
-        return out
     }
 }
 

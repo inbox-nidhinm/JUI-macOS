@@ -271,6 +271,16 @@ A plain writing pad for Juilee. Built July 16–17, 2026.
     to be cut to one line. The tile is the same size, so the grid doesn't
     move. The folder frame set no longer ships.
 
+17. **The icon follows the mood, from the phone.** The six icons the iPhone
+    app switches between — one per mood, from the Figma system (node
+    331:539) — now drive the Mac's too: rendered from the same SVGs onto the
+    macOS icon grid (the rounded tile at 824 of 1024, with its shadow), set
+    as the running app's icon on every change of mood, and written onto the
+    bundle so Finder, Launchpad and the Dock keep it after quitting. Cream is
+    the bundle's own icon. This retires the fixed black icon that kept the
+    rebuild apart from the shipping JUI, and the pixel recolour of the old
+    gold icon that main used.
+
 ## Minor updates & polish
 
 - **New folder without the context menu**: the folder grid ends with a `+`
