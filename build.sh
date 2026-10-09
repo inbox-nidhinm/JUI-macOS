@@ -10,20 +10,16 @@ set -e
 cd "$(dirname "$0")"
 
 # --- identity ----------------------------------------------------------------
-# Everything that makes this a distinct app from the shipping JUI lives in these
-# three lines, and nowhere else. The re-JUI branch is a look rebuild: it has to
-# be installable and runnable *beside* the real app without touching its notes,
-# its settings or its Dock tile, so it gets its own name, its own bundle id
-# (hence its own UserDefaults domain and — via CFBundleName — its own vault),
-# and its own build counter so the two branches never fight over one number.
-#
-# Merging this branch back into main means restoring these three values. That is
-# the whole revert, which is why they are hoisted here rather than committed
-# into Info.plist.
-NAME="re-JUI"
-BUNDLE_ID="com.nidhin.jui.re"
-COUNTER="build-number-re"
-# (There was a fourth, ICON, for a fixed black icon that told this build apart
+# The app's name, bundle id and build counter, stamped into the bundle below.
+# Until build 69 this branch was re-JUI, a look rebuild that ran *beside* the
+# shipping JUI under its own name (re-JUI), id (com.nidhin.jui.re) and counter
+# (build-number-re), so it never touched the real app's notes or settings. It
+# replaced JUI outright on 2026-10-10 and these went back to the real app's
+# values; the counter carries on from re-JUI's 69, so builds keep climbing.
+NAME="JUI"
+BUNDLE_ID="com.nidhin.jui"
+COUNTER="build-number"
+# (There was a fourth, ICON, for a fixed black icon that told the rebuild apart
 # in the Dock. The icon follows the mood now, as on the phone — see below.)
 
 APP="$NAME.app"
@@ -46,7 +42,7 @@ echo "$BUILD_NUMBER" > "$COUNTER"
 # The identity above is stamped in here rather than kept in the source
 # Info.plist, so that file stays the canonical description of the real app.
 # CFBundleName is load-bearing beyond the menu bar: NotesStore derives the vault
-# folder from it, so this is also what keeps this build's notes out of JUI's.
+# folder from it, so a build under another name keeps its own notes.
 for key in CFBundleName CFBundleDisplayName CFBundleExecutable; do
   /usr/libexec/PlistBuddy -c "Set :$key $NAME" "$APP/Contents/Info.plist" > /dev/null
 done

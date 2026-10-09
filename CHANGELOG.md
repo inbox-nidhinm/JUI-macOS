@@ -281,6 +281,12 @@ A plain writing pad for Juilee. Built July 16–17, 2026.
     rebuild apart from the shipping JUI, and the pixel recolour of the old
     gold icon that main used.
 
+18. **re-JUI becomes JUI.** The rebuild stops running beside the original
+    and replaces it (2026-10-10): the app is `JUI` again, with the real bundle
+    id (`com.nidhin.jui`) and one build counter carried on from re-JUI's 69.
+    It is `main` now; the original's last commit is tagged `jui-v1`, and its
+    build and source are archived in `Claude Code/Archive/JUI v1`.
+
 ## Minor updates & polish
 
 - **New folder without the context menu**: the folder grid ends with a `+`

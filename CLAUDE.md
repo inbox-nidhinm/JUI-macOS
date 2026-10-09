@@ -371,44 +371,42 @@ the selection invisible — same colour on same colour. A field declared
 rows already highlight with. Get this wrong and the selection silently vanishes
 rather than looking wrong.
 
-## The `re-JUI` branch — a parallel app, not just a branch
+## re-JUI became JUI (2026-10-10)
 
-`re-JUI` is a ground-up rework of the app's *look*. It is built to install and
-run **beside** the shipping JUI, so the two can be compared side by side and a
-half-finished redesign never costs anyone their notes.
+What is now `main` was built as `re-JUI`: a ground-up rework of the app's
+*look*, which installed and ran **beside** the shipping JUI so the two could be
+compared and a half-finished redesign never cost anyone their notes. At build
+69 it replaced JUI outright. `main` is the only line now; the original JUI's
+last commit is tagged `jui-v1`, and its build and source are archived in
+`~/Documents/Claude Code/Archive/JUI v1`.
 
-Three values at the top of `build.sh` are the entire divergence:
+The whole divergence was three values at the top of `build.sh`, stamped into
+the bundle at build time with `PlistBuddy` (the source `Info.plist` always
+described the real app). They are back to the real app's:
 
-| | main | re-JUI |
+| | now (JUI) | was (re-JUI) |
 |---|---|---|
 | `NAME` (app, executable, zip) | `JUI` | `re-JUI` |
 | `BUNDLE_ID` | `com.nidhin.jui` | `com.nidhin.jui.re` |
-| `COUNTER` | `build-number` | `build-number-re` |
+| `COUNTER` | `build-number` (carried on from 69) | `build-number-re` |
 
-(There was a fourth, `ICON`, for a fixed black `AppIconRe.icns`. The icon follows
-the mood now — see below — and is built from `Art/AppIcons`.)
+The mechanism is worth keeping in mind if a side-by-side build is ever wanted
+again:
 
-They are stamped into the bundle at build time with `PlistBuddy`, alongside the
-`CFBundleVersion` stamp that was already there. **The source `Info.plist` is
-left describing the real app** — so merging this branch back is a matter of
-restoring those three lines, and nothing else.
-
-What each one buys:
-
-- **A separate bundle id is a separate `UserDefaults` domain.** Theme, name,
-  font, vault path and `onboardingCompleted` are all independent, which is why a
-  fresh `re-JUI` build opens on onboarding in cream while the real app stays on
-  whatever it was set to.
-- **A separate `CFBundleName` is a separate vault.** `NotesStore.appFolderName`
-  reads it and the vault becomes `~/Library/Application Support/<name>/Notes`,
-  so this build writes to `re-JUI/Notes`. That replaced a hardcoded `"JUI/Notes"`
-  in two places; on main it resolves to exactly what it always did. The fallback
+- **A bundle id is a `UserDefaults` domain.** Theme, name, font, vault path and
+  `onboardingCompleted` all live there. At the switch, re-JUI's settings
+  (`com.nidhin.jui.re`: the iCloud vault, mint) were copied over
+  `com.nidhin.jui` on Nidhin's Mac, with the old JUI's saved beside its archive.
+  On any other Mac still running the original JUI, the new build simply picks
+  up that Mac's existing JUI settings and notes.
+- **`CFBundleName` names the default vault.** `NotesStore.appFolderName` reads
+  it and the default vault is `~/Library/Application Support/<name>/Notes`
+  (`JUI/Notes` now, `re-JUI/Notes` before). A saved `vaultPath` overrides it —
+  in practice `iCloud Drive/JUI Notes`, shared with the iPhone app. The fallback
   is `"JUI"`, for the case where there is no bundle to read.
-- **A separate counter** keeps the two branches from conflicting on a one-line
-  file every time either of them builds.
 
 `.gitignore` matches build products as `*.app/` and `*.zip` rather than by name,
-so neither branch's bundle can be committed by the other's build.
+so a stray `re-JUI.app` is covered too.
 
 ### The flourish animation, and two traps in rasterising it
 
@@ -519,15 +517,10 @@ All six ship in `Resources/AppIcons/`, and cream also becomes the bundle's
 app has ever run. `AppIcon.apply` runs at launch and on every `setTheme`.
 
 This replaced, in turn, a fixed black icon (`AppIconRe.icns`, so the rebuild
-couldn't be mistaken for the shipping JUI in the Dock) and, on main, a recolour
-of the original gold icon worked out pixel by pixel. Designed icons need
-neither; the recolour, `prepare()`, `pristine` and `followsTheme` are gone.
-
-The scratch vault at `~/Library/Application Support/re-JUI/Notes` was seeded
-with a **copy** of the real notes, so the redesign is judged against real prose
-— real line lengths, real folders, a real sticky — rather than lorem ipsum.
-It is a copy: edits made in `re-JUI` never reach the real vault, and are also
-never carried back to it.
+couldn't be mistaken for the shipping JUI in the Dock) and, in the original
+JUI, a recolour of the gold icon worked out pixel by pixel. Designed icons need
+neither; the recolour, `prepare()`, `pristine` and `followsTheme` are gone, and
+so is the tracked gold `AppIcon.icns`.
 
 ## Build & ship
 
@@ -536,7 +529,7 @@ never carried back to it.
 ```
 
 **Run the staged copy, not the one in the repo.** `build.sh` finishes by
-copying the bundle to `~/Library/Application Support/re-JUI-dev/` and prints the
+copying the bundle to `~/Library/Application Support/JUI-dev/` and prints the
 path.
 
 This repo is inside `~/Documents`, which macOS protects with TCC, so the

@@ -477,9 +477,9 @@ final class NotesStore: ObservableObject {
     // MARK: First run & display name
 
     // The vault is named after the app rather than after the string "JUI", so a
-    // build carrying a different CFBundleName — the re-JUI look rebuild — keeps
-    // its own notes instead of writing into the shipping app's. For the real
-    // app this resolves to exactly what it always did.
+    // build carrying a different CFBundleName (as the re-JUI look rebuild did,
+    // before it became JUI) keeps its own notes instead of writing into the
+    // real app's. For JUI itself this is ~/Library/Application Support/JUI/Notes.
     static var appFolderName: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "JUI"
     }

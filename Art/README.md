@@ -1,7 +1,7 @@
 # Art drop
 
-Where source art goes on the `re-JUI` branch. Drop files in, tell me what they
-are, and I'll wire them up.
+Where source art goes. Drop files in, tell me what they are, and I'll wire
+them up.
 
 ```
 Art/
@@ -10,7 +10,7 @@ Art/
   Reference/   Figma exports, screen recordings, anything to look at
 ```
 
-Only `Textures/` is copied into `re-JUI.app`. `Vectors/` and `Reference/` are
+Only `Textures/` is copied into `JUI.app`. `Vectors/` and `Reference/` are
 inputs to the build, not part of it.
 
 ---
