@@ -133,10 +133,13 @@ enum Surface {
         case .sticky: return 0.46
         // #D0C1A7 against #ECDBBE — a 0.88 multiply, uniform across channels.
         case .folderPanel: return 0.93
-        // #E5D6BC against #F3E4CA — 0.937. Half the panel's, and that gap is
-        // the whole reason a tile reads as sitting *on* the pane: 21 levels of
-        // separation in the system against the 7 that one shared value gave.
-        case .folderTile: return 0.49
+        // Lighter than the system's 0.49 (#E5D6BC against #F3E4CA). The tiles
+        // now sit on the notes tray's deeper page paper rather than on a panel,
+        // and are built on the sheet colour; at 0.49 the grain pulled them back
+        // down to the tray's own lightness and they read as a grey smudge on
+        // it. At 0.30 a tile is a clear, gentle step lighter than the tray it
+        // sits on — which is still the whole reason it reads as *on* the pane.
+        case .folderTile: return 0.30
         // As the page. The ⌘K cards — and the notes tray, which is made the same
         // way — are the page's own paper a shade deeper, not a panel stock: the
         // reader asked for "the same background texture as the notes with a

@@ -622,6 +622,9 @@ page's own paper (`Surface.palette` is the sheet stock at the page's strength
 and the page's grain) with the panel colour *multiplied* in at 70%, so they read
 as the page a shade deeper with the grain coming through. It came from the
 phone, where the reader asked for it. Use it as a background, never an overlay.
+The folder tiles on the tray are built on `sheet` (hover: `letterSheet`) with
+their grain at 0.30, not on `folderBase` — on the deeper tray that came out the
+tray's own lightness, a grey smudge with no contrast.
 
 **Both come and go solid**, never fading: ⌘K drops in from above the window and
 the tray rises from below it, each travelling its own measured height plus

@@ -4143,7 +4143,7 @@ struct ContentView: View {
                 .padding(.vertical, folderCellPadding)
                 .padding(.horizontal, 10)
                 .background(
-                    (panelHighlight == .addFolder ? sheetColor : folderBaseColor)
+                    (panelHighlight == .addFolder ? letterColor : sheetColor)
                         .papered(.folderTile)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 )
@@ -4261,8 +4261,14 @@ struct ContentView: View {
             // Folder cards cross-fade rather than sliding a shared box around:
             // they differ in size from note rows, and morphing between the two
             // shapes read as an arc. Their own tint just lightens on hover.
+            //
+            // The page's own colour at rest, a step lighter than the tray —
+            // which is the page made deeper — and the letter's paper under the
+            // pointer, a step lighter again. They were `folderBase`, which on
+            // the tray's deeper paper came out the same lightness as the tray
+            // and read as a grey smudge on it.
             .background(
-                (panelHighlight == .folder(folder) ? sheetColor : folderBaseColor)
+                (panelHighlight == .folder(folder) ? letterColor : sheetColor)
                     .papered(.folderTile)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             )
