@@ -22,5 +22,7 @@
 	<string>26.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSDockTilePlugIn</key>
+	<string>JUIDockTile.docktileplugin</string>
 </dict>
 </plist>

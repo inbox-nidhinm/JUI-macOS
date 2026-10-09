@@ -185,10 +185,40 @@ done
 lipo -create /tmp/jui-arm64 /tmp/jui-x86_64 -output "$APP/Contents/MacOS/$NAME"
 rm -f /tmp/jui-arm64 /tmp/jui-x86_64
 
+# The Dock tile plug-in (DockTile.swift): draws the mood's icon in the Dock
+# while the app isn't running, so a pinned tile keeps up with the mood without
+# the Dock being restarted. A loadable bundle, not a dylib — hence
+# `-Xlinker -bundle` — named by NSDockTilePlugIn in Info.plist.
+PLUGIN="$APP/Contents/PlugIns/JUIDockTile.docktileplugin"
+mkdir -p "$PLUGIN/Contents/MacOS"
+for arch in arm64 x86_64; do
+  swiftc -O -parse-as-library -swift-version 5 \
+    -target "$arch-apple-macos$DEPLOY_TARGET" -module-name JUIDockTile \
+    -emit-library -Xlinker -bundle DockTile.swift -o "/tmp/jui-docktile-$arch"
+done
+lipo -create /tmp/jui-docktile-arm64 /tmp/jui-docktile-x86_64 \
+  -output "$PLUGIN/Contents/MacOS/JUIDockTile"
+rm -f /tmp/jui-docktile-arm64 /tmp/jui-docktile-x86_64
+cat > "$PLUGIN/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key><string>JUIDockTile</string>
+	<key>CFBundleIdentifier</key><string>$BUNDLE_ID.docktile</string>
+	<key>CFBundleName</key><string>JUIDockTile</string>
+	<key>CFBundlePackageType</key><string>BNDL</string>
+	<key>CFBundleVersion</key><string>$BUILD_NUMBER</string>
+	<key>NSPrincipalClass</key><string>JUIDockTilePlugIn</string>
+</dict>
+</plist>
+PLIST
+
 # Extended attributes from downloaded/rendered assets make codesign fail; clear
 # them first, and let a signing failure stop the build rather than shipping an
-# unsigned bundle.
+# unsigned bundle. Nested code is signed first, then the app around it.
 xattr -cr "$APP"
+codesign --force --sign - "$PLUGIN"
 codesign --force --sign - "$APP"
 codesign --verify --deep --strict "$APP"
 

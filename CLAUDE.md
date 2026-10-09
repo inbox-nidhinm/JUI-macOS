@@ -15,6 +15,7 @@ No Xcode project. Five Swift files compiled directly by `swiftc`:
 |---|---|---|
 | `main.swift` | ~4200 | Everything: tokens, store, text engine, stickies, panel, search, settings |
 | `Crumple.swift` | ~560 | The crumpled-ball sticky: the SceneKit sheet, its creases, `CrumpleDirector` |
+| `DockTile.swift` | ~80 | The Dock tile plug-in — built on its own into `Contents/PlugIns`, not into the app |
 | `Theme.swift` | ~200 | The six palettes, the mood-following `AppIcon`, the mood-dot `ThemePicker` |
 | `Texture.swift` | ~240 | The paper: which stock each surface takes, at what grain and strength |
 | `Onboarding.swift` | ~510 | First-run envelope flow only |
@@ -685,20 +686,28 @@ Two things hold this together:
   shipped zip are never affected — `build.sh` rebuilds the bundle from scratch,
   so only an installed copy that has been run carries the file.
 
-**A pinned Dock tile needs the Dock restarted.** `setIcon` updates Finder
-immediately, but the Dock keeps its own cache of a pinned tile's icon. Measured:
-`touch`ing the bundle and `lsregister -f` both leave the stale tile in place;
-only relaunching the Dock clears it (`AppIcon.refreshDockTile()`, which
-terminates `com.apple.dock` and lets launchd bring it back).
+**A pinned Dock tile is drawn by a Dock tile plug-in while the app is closed.**
+`setIcon` updates Finder immediately, but the Dock keeps its own cache of a
+pinned tile's icon and shows it once the app quits. Measured: `touch`ing the
+bundle and `lsregister -f` both leave the stale tile in place; only relaunching
+the Dock cleared it — and the app used to do exactly that on quit, which made the
+whole Dock vanish for a moment. The reader noticed.
 
-That fires **on quit, and only if the theme changed during the session** —
-`NotesStore.themeChangedThisSession`. While the app is running the tile draws
-`applicationIconImage` and is already correct, so the stale cache is invisible
-until the app is gone; doing it at quit means the Dock never flashes mid-use, and
-an ordinary quit leaves the Dock alone entirely. Don't move this to `setTheme`.
+So the app now carries `Contents/PlugIns/JUIDockTile.docktileplugin`
+(`DockTile.swift`, built separately by `build.sh` as a loadable bundle, named
+by `NSDockTilePlugIn` in `Info.plist`). It is Apple's mechanism for an app to
+draw its own tile while it isn't running. It runs inside the Dock, so it reads
+what it needs from where the app leaves it: the mood from the app's preferences
+(`themeID`), the icons from the app's `Resources/AppIcons`. The app also posts
+`com.nidhin.jui.moodChanged` (a distributed notification carrying the mood) on
+every change and on quit, so the tile never waits on preferences to sync. It
+logs `JUIDockTile: loaded …` / `drew <mood>` — `log show --last 5m --predicate
+'eventMessage CONTAINS "JUIDockTile"'` is how to tell it is working.
 
-Granola reached for a private Dock API for the same problem. Restarting the Dock
-is public, and at this app's scale the difference doesn't justify the fragility.
+Two things it depends on: the plug-in is signed before the app around it (nested
+code first), and the Dock only notices a plug-in when it reads the tile's
+bundle — so a copy already pinned before the plug-in existed may need one Dock
+restart, once, to pick it up.
 
 If JUI is ever notarised, this needs revisiting: notarisation would reject a
 bundle carrying that file, though the artifact you submit is built fresh and so

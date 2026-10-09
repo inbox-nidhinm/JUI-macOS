@@ -128,7 +128,8 @@ enum AppIcon {
     static func apply(_ theme: Theme) {
         guard let image = image(for: theme) else { return }
         NSApplication.shared.applicationIconImage = image // Dock, ⌘-Tab, About
-        persist(theme, image) // Finder, Launchpad, and the Dock after quitting
+        persist(theme, image) // Finder, Launchpad
+        tellDockTile(theme) // the Dock, once the app has quit
     }
 
     // Writes the icon onto the bundle itself — the same thing pasting into a Get
@@ -151,20 +152,21 @@ enum AppIcon {
         NSWorkspace.shared.setIcon(icon, forFile: Bundle.main.bundlePath, options: [])
     }
 
-    // The Dock keeps its own cache of a *pinned* tile's icon and only re-reads it
-    // when it restarts. Measured on the main branch: touching the bundle and
-    // re-registering it with LaunchServices (`lsregister -f`) both leave the
-    // stale tile in place; relaunching the Dock is the only thing that clears it.
-    // launchd brings it straight back, so this costs a brief flash.
+    // The Dock keeps its own cache of a *pinned* tile's icon, and after the app
+    // quits it shows that — the previous mood's, if the mood changed. Measured
+    // on the old main branch: touching the bundle and `lsregister -f` both left
+    // the stale tile; only restarting the Dock cleared it, and the app used to
+    // do that on quit, which made the whole Dock vanish for a moment.
     //
-    // Called on quit, and only when the mood changed during the session. While
-    // the app runs the tile draws applicationIconImage and is already right, so
-    // this way the flash never interrupts anyone mid-use.
-    static func refreshDockTile() {
-        for dock in NSRunningApplication.runningApplications(
-            withBundleIdentifier: "com.apple.dock") {
-            dock.terminate()
-        }
+    // Now the Dock tile plug-in (DockTile.swift, built into
+    // Contents/PlugIns) draws the tile while the app isn't running. This tells
+    // it the mood the moment it changes — and again on quit — so it never has
+    // to wait on the preferences it would otherwise read.
+    static let moodChanged = Notification.Name("com.nidhin.jui.moodChanged")
+
+    static func tellDockTile(_ theme: Theme) {
+        DistributedNotificationCenter.default().postNotificationName(
+            moodChanged, object: nil, userInfo: ["mood": theme.id], deliverImmediately: true)
     }
 }
 
