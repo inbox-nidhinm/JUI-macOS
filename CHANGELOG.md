@@ -236,9 +236,15 @@ A plain writing pad for Juilee. Built July 16–17, 2026.
     In use the margin was too far from what a sticky is about. Following the
     crumpled-sticky prototype, the ball now has a place of its own in the
     line, right after the anchored words, and the sentence carries on after
-    it — 24pt, centred on the line like the words. The room is spacing laid
-    on in the editor only and stripped before anything is saved, so the note
-    on disk (and on the phone) is unchanged. Clicked, the ball opens out
+    it — 24pt, centred on the line like the words, with two spaces' air on
+    either side. The room is the space after the word, widened in the editor
+    only and stripped before anything is saved, so the note on disk (and on
+    the phone) is unchanged. It was spacing hung off the word's last letter
+    at first, which made the caret after the word sit past the ball and a
+    click just after the word land before its last letter; on the space, the
+    caret has a place either side of the ball. Writing straight on from the
+    end of the highlighted words now carries the highlight with it; only
+    words after a space are outside it. Clicked, the ball opens out
     right there, over the page; a card in the way can be dragged anywhere by
     its paper, and opens where it was left from then on ("Return to Its
     Words" puts it back).

@@ -193,7 +193,9 @@ everywhere. Smart dashes silently broke `---` rules once already.
 
 **Sticky anchors are character ranges, remapped on every edit** via
 `textView(_:shouldChangeTextIn:)` → `store.remapStickies`. Anchors inside a
-deleted range collapse to the edit point rather than dying. `syncStickies`
+deleted range collapse to the edit point rather than dying. Typing straight on
+from the end of a sticky's words, with no space, extends the anchor over the new
+letters (up to the first space typed); only what follows a space is outside. `syncStickies`
 rebuilds positions on every layout pass. A card measures its own height, and
 must be width-set *before* measuring or long notes load at default size.
 
@@ -227,9 +229,15 @@ Rules that keep it working:
   card's frame, the ball's centre and a stage rect around both, all in page
   points, and converts.
 - **The ball's room in the line is spacing, laid on in the editor only.**
-  `applyStickySlots` puts `.kern` (marked `.stickySlot`) on the last inked
-  letter of each sticky's words — enough for the ball and its air — and takes
-  it off wherever it no longer belongs. `NotesStore.textChanged` strips both
+  `applyStickySlots` widens the *space after* each sticky's word with `.kern`
+  (marked `.stickySlot`) to two spaces, the ball, two spaces — and takes it off
+  wherever it no longer belongs. **Never put it on the last letter:** that makes
+  the letter one wide glyph, so the caret after the word is drawn past the
+  ball and a click just right of the word lands *before* its last letter
+  (measured, and the bug this replaced). On the space, the caret after the word
+  sits against it and each half of the gap clicks to its own side. A word that
+  ends its line or the note has no space to widen: its ball sits past the line
+  end and nothing is laid on (`SlotPlace.lineEnd`). `NotesStore.textChanged` strips both
   on the way back from the editor, which is the only way text reaches the
   store, so the spacing never reaches the RTF or the phone. It is applied a
   turn of the loop after `syncStickies` (which runs from layout, where the

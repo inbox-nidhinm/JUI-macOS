@@ -633,10 +633,27 @@ final class NotesStore: ObservableObject {
 
     // Shift anchors through a text edit so they keep tracking their text.
     // Anchors inside a deleted range collapse to the edit point but survive.
-    func remapStickies(edit: NSRange, replacementLength: Int) {
+    //
+    // Writing straight on from the end of a sticky's words — no space between
+    // — carries the words on, so the highlight grows to take the new letters:
+    // only what comes after a space is outside it. Called before the edit, with
+    // the text as it stands.
+    func remapStickies(edit: NSRange, replacement: String, in text: NSString) {
         guard !stickies.isEmpty else { return }
+        let replacementLength = (replacement as NSString).length
         let delta = replacementLength - edit.length
         let editEnd = edit.location + edit.length
+        // How much of an insertion runs on from the word before it: up to its
+        // first space or line break.
+        let runOn: Int = {
+            let breaks = CharacterSet.whitespacesAndNewlines
+            var n = 0
+            for scalar in replacement.unicodeScalars {
+                if breaks.contains(scalar) { break }
+                n += String(scalar).utf16.count
+            }
+            return n
+        }()
         var changed = false
         func map(_ position: Int) -> Int {
             if position <= edit.location { return position }
@@ -647,7 +664,13 @@ final class NotesStore: ObservableObject {
             let start = stickies[i].start
             let end = start + stickies[i].length
             let newStart = map(start)
-            let newEnd = max(map(end), newStart)
+            var newEnd = max(map(end), newStart)
+            if edit.length == 0, edit.location == end, end > start, runOn > 0,
+               end - 1 < text.length,
+               let last = Unicode.Scalar(text.character(at: end - 1)),
+               !CharacterSet.whitespacesAndNewlines.contains(last) {
+                newEnd = end + runOn
+            }
             if newStart != start || newEnd - newStart != stickies[i].length {
                 stickies[i].start = newStart
                 stickies[i].length = newEnd - newStart
@@ -2221,40 +2244,91 @@ final class PlainTextView: NSTextView {
 
     // A sticky's ball has a place of its own in the line, right after the
     // words it is about, and the sentence carries on after it — nothing is
-    // covered and nothing moves when it opens. The room is made by spacing laid
-    // after the last letter of the words (`.kern`, marked `.stickySlot`), in the
-    // editor's storage only: `NotesStore.textChanged` strips it on the way
-    // back, so it never reaches the file. Laid on and taken off here, from the
-    // anchors, whenever they move.
+    // covered and nothing moves when it opens. Two spaces' air either side of
+    // it, so the caret can be put on either side without hunting.
+    //
+    // The room is the *space after the words*, widened (`.kern`, marked
+    // `.stickySlot`) — not spacing hung off the last letter. That matters for
+    // the caret: spacing on a letter makes the letter one wide glyph, with the
+    // only caret position after it on the far side of the ball, and a click in
+    // the near half of it landing *before* the letter. On the space, the caret
+    // after the word sits against the word, the one after the space sits past
+    // the ball, and a click in either half of the gap lands on that side.
+    //
+    // Words that end a line or the note have no space after them to widen;
+    // their ball just sits past the end of the line, and nothing is added.
+    //
+    // All of it is in the editor's storage only: `NotesStore.textChanged`
+    // strips it on the way back, so it never reaches the file. Laid on and
+    // taken off here, from the anchors, whenever they move.
 
-    /// Air between the last letter and the ball, and between two balls on the
-    /// same words.
-    static let slotLead: CGFloat = 8
+    /// Where a ball's room is: in the space at character `i`, widened, or just
+    /// past character `i` at the end of its line, with nothing to widen.
+    enum SlotPlace: Hashable {
+        case gap(Int)
+        case lineEnd(Int)
+
+        var character: Int {
+            switch self { case .gap(let i), .lineEnd(let i): return i }
+        }
+    }
+
+    /// Spaces of air either side of the ball; and between two on one word.
+    static let slotSpaces: CGFloat = 2
     static let slotGap: CGFloat = 2
     static var slotBall: CGFloat { CGFloat(CrumpleSheet.ballDiameter) }
 
-    /// How much room `count` balls take after a word.
-    static func slotWidth(_ count: Int) -> CGFloat {
-        slotLead + CGFloat(count) * slotBall + CGFloat(max(count - 1, 0)) * slotGap
+    static func ballsWidth(_ count: Int) -> CGFloat {
+        CGFloat(count) * slotBall + CGFloat(max(count - 1, 0)) * slotGap
     }
 
-    /// The character each sticky's ball follows — the last one with ink in its
-    /// words (trailing spaces and newlines carry none), or, if its words were
-    /// all deleted, the one before where they were — and the stickies sharing
-    /// it, in anchor order.
-    private func slotCharacters(_ list: [Sticky]) -> [Int: [UUID]] {
+    /// The spacing laid on a gap's space for `count` balls: two spaces, the
+    /// balls, two spaces — less the one space the character already is.
+    static func gapKern(_ count: Int, space: CGFloat) -> CGFloat {
+        (slotSpaces * 2 - 1) * space + ballsWidth(count)
+    }
+
+    /// One space, in the face the text at `char` is set in.
+    private func spaceWidth(at char: Int) -> CGFloat {
+        guard let storage = textStorage, storage.length > 0 else {
+            return (" " as NSString).size(withAttributes: [.font: Style.baseFont]).width
+        }
+        let font = storage.attribute(.font, at: min(char, storage.length - 1), effectiveRange: nil)
+            as? NSFont ?? Style.baseFont
+        return (" " as NSString).size(withAttributes: [.font: font]).width
+    }
+
+    /// Where each sticky's ball goes, and the stickies sharing each place, in
+    /// anchor order. After the whole word its words end in — a sticky on part
+    /// of a word marks the word — at the space that follows, or at the end of
+    /// the line if nothing does. Trailing spaces in the anchor don't count; a
+    /// sticky whose words were all deleted goes where they were.
+    private func slotPlaces(_ list: [Sticky]) -> [SlotPlace: [UUID]] {
         let text = string as NSString
-        var out: [Int: [UUID]] = [:]
+        let breaks = CharacterSet.whitespacesAndNewlines
+        var out: [SlotPlace: [UUID]] = [:]
         for sticky in list.sorted(by: { $0.start < $1.start }) {
             let start = min(max(sticky.start, 0), text.length)
             var last = min(start + max(sticky.length, 0), text.length)
             while last > start, let scalar = Unicode.Scalar(text.character(at: last - 1)),
-                  CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                  breaks.contains(scalar) {
                 last -= 1
             }
-            let at = last > start ? last - 1 : start - 1
-            guard at >= 0, at < text.length else { continue }
-            out[at, default: []].append(sticky.id)
+            var j = last
+            while j < text.length, let scalar = Unicode.Scalar(text.character(at: j)),
+                  !breaks.contains(scalar) {
+                j += 1
+            }
+            let place: SlotPlace
+            if j < text.length, let scalar = Unicode.Scalar(text.character(at: j)),
+               !CharacterSet.newlines.contains(scalar) {
+                place = .gap(j)
+            } else if j > 0 {
+                place = .lineEnd(j - 1)
+            } else {
+                continue
+            }
+            out[place, default: []].append(sticky.id)
         }
         return out
     }
@@ -2264,10 +2338,12 @@ final class PlainTextView: NSTextView {
     /// Lays the spacing on where `slots` says, and takes it off everywhere
     /// else — a turn of the loop later, since this runs from layout and the
     /// storage can't be edited mid-layout. Only when something has changed.
-    private func applyStickySlots(_ slots: [Int: [UUID]]) {
+    private func applyStickySlots(_ slots: [SlotPlace: [UUID]]) {
         guard let storage = textStorage else { return }
         var wanted: [Int: CGFloat] = [:]
-        for (at, ids) in slots { wanted[at] = Self.slotWidth(ids.count) }
+        for (place, ids) in slots {
+            if case .gap(let i) = place { wanted[i] = Self.gapKern(ids.count, space: spaceWidth(at: i)) }
+        }
         var present: [Int: CGFloat] = [:]
         storage.enumerateAttribute(.stickySlot, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
             guard value != nil else { return }
@@ -2285,15 +2361,20 @@ final class PlainTextView: NSTextView {
             storage.enumerateAttribute(.stickySlot, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
                 if value != nil { marked.append(range) }
             }
-            let slots = self.slotCharacters(self.notesStore?.stickies ?? [])
+            let slots = self.slotPlaces(self.notesStore?.stickies ?? [])
+            var gaps: [(NSRange, CGFloat)] = []
+            for (place, ids) in slots {
+                guard case .gap(let i) = place, i < storage.length else { continue }
+                gaps.append((NSRange(location: i, length: 1),
+                             Self.gapKern(ids.count, space: self.spaceWidth(at: i))))
+            }
             storage.beginEditing()
             for range in marked {
                 storage.removeAttribute(.kern, range: range)
                 storage.removeAttribute(.stickySlot, range: range)
             }
-            for (at, ids) in slots where at < storage.length {
-                let range = NSRange(location: at, length: 1)
-                storage.addAttribute(.kern, value: Self.slotWidth(ids.count), range: range)
+            for (range, kern) in gaps {
+                storage.addAttribute(.kern, value: kern, range: range)
                 storage.addAttribute(.stickySlot, value: true, range: range)
             }
             storage.endEditing()
@@ -2313,13 +2394,16 @@ final class PlainTextView: NSTextView {
         set { super.typingAttributes = newValue }
     }
 
-    /// Where the room after character `at` starts, and the top of its line.
-    private func slotStart(after at: Int, lm: NSLayoutManager) -> (x: CGFloat, lineTop: CGFloat) {
+    /// Where a place's room starts — the start of the widened space, or the
+    /// end of the line's last letter — and the top of its line.
+    private func slotStart(_ place: SlotPlace, lm: NSLayoutManager) -> (x: CGFloat, lineTop: CGFloat) {
         let origin = textContainerOrigin
         guard lm.numberOfGlyphs > 0 else { return (origin.x, origin.y) }
-        let glyph = min(lm.glyphIndexForCharacter(at: at), lm.numberOfGlyphs - 1)
+        let char = place.character
+        let glyph = min(lm.glyphIndexForCharacter(at: char), lm.numberOfGlyphs - 1)
         let fragment = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-        let x = fragment.minX + lm.location(forGlyphAt: glyph).x + advance(ofGlyph: glyph, at: at, lm: lm)
+        var x = fragment.minX + lm.location(forGlyphAt: glyph).x
+        if case .lineEnd = place { x += advance(ofGlyph: glyph, at: char, lm: lm) }
         return (x + origin.x, fragment.minY + origin.y)
     }
 
@@ -2356,7 +2440,7 @@ final class PlainTextView: NSTextView {
         }
         guard let lm = layoutManager else { return }
         let size = StickyBallView.hitSize
-        let slots = slotCharacters(list)
+        let slots = slotPlaces(list)
         applyStickySlots(slots)
         for sticky in list.sorted(by: { $0.start < $1.start }) {
             let ball = balls[sticky.id] ?? {
@@ -2375,9 +2459,10 @@ final class PlainTextView: NSTextView {
                 continue
             }
             let index = CGFloat(slot.value.firstIndex(of: sticky.id) ?? 0)
-            let room = slotStart(after: slot.key, lm: lm)
+            let room = slotStart(slot.key, lm: lm)
+            let lead = Self.slotSpaces * spaceWidth(at: slot.key.character)
             let centre = CGPoint(
-                x: room.x + Self.slotLead + Self.slotBall / 2 + (Self.slotBall + Self.slotGap) * index,
+                x: room.x + lead + Self.slotBall / 2 + (Self.slotBall + Self.slotGap) * index,
                 y: Style.ruledCentre(forLineTop: room.lineTop))
             ball.frame = NSRect(x: centre.x - size.width / 2, y: centre.y - size.height / 2,
                                 width: size.width, height: size.height)
@@ -3200,8 +3285,8 @@ struct RichTextEditor: NSViewRepresentable {
         ) -> Bool {
             if let replacement = replacementString {
                 store.remapStickies(
-                    edit: affectedCharRange,
-                    replacementLength: (replacement as NSString).length)
+                    edit: affectedCharRange, replacement: replacement,
+                    in: textView.string as NSString)
             }
             return true
         }
