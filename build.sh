@@ -157,21 +157,6 @@ if [ -f "$ANIM" ]; then
   echo "Flourish: shipped 3 x $(ls -1 .animcache/corner/frame-*.png | wc -l | tr -d ' ') frames ($(du -sh "$APP/Contents/Resources/FlourishFrames" | cut -f1))"
 fi
 
-# The sticky's delete and done marks: the system's scatter-brush vectors, each
-# composed into its 60-unit tile, rasterised whole (no crop) through WebKit for
-# the same reasons as the frames above. 132px is the 44pt button at 3x.
-# Cached on the sources' modification time, in the animation cache.
-MARKS="Art/Vectors/StickyButtons"
-if [ -d "$MARKS" ]; then
-  mkdir -p .animcache/marks
-  if [ ! -f .animcache/marks/StickyDone.png ] \
-     || [ -n "$(find "$MARKS" -newer .animcache/marks/StickyDone.png -name '*.svg')" ]; then
-    swift Art/render-marks.swift "$MARKS" .animcache/marks 132
-  fi
-  mkdir -p "$APP/Contents/Resources/StickyButtons"
-  cp .animcache/marks/*.png "$APP/Contents/Resources/StickyButtons/"
-fi
-
 for arch in arm64 x86_64; do
   swiftc -O -parse-as-library -swift-version 5 \
     -target "$arch-apple-macos$DEPLOY_TARGET" \

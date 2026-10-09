@@ -26,10 +26,8 @@ grep for `for arch in`.
 
 **Art ships as directories, not as a list of filenames.** `Contents/Resources`
 gets `AppIcon.icns`, `Textures/` (three greyscale JPEGs, derived from
-`Art/Textures`), `FlourishFrames/{corner,folder,sticky}/` (the stop-motion
-frames, derived from `Art/Vectors`) and `StickyButtons/` (the sticky's delete
-and done marks, derived from `Art/Vectors/StickyButtons` by
-`Art/render-marks.swift`). All are copied wholesale, which is
+`Art/Textures`) and `FlourishFrames/{corner,folder,sticky}/` (the stop-motion
+frames, derived from `Art/Vectors`). Both are copied wholesale, which is
 deliberate: the per-asset loop that used to sit here did nothing when someone
 added a file and forgot to name it, and on this branch drawing nothing and
 drawing a very subtle grain look identical. There are no loose PNGs at the repo
@@ -53,8 +51,8 @@ enough to be believed.
 | Document loading | `MARK: Getting a document` | `load` / `loadBlank` — every route into the editor |
 | `SmoothCaret` | `final class SmoothCaret` | Shared caret glide (note editor *and* stickies) |
 | `StickyView` | `final class StickyView` | The open sticky's card: postage stamp, drawn by hand |
-| `StickyBallView` | `final class StickyBallView` | A sticky put away: the crumpled ball in the margin |
-| `StampButton` | `final class StampButton` | Delete and done, hung under the card while it is written in |
+| `StickyBallView` | `final class StickyBallView` | A sticky put away: the crumpled ball after its words |
+| `StickyCloseDot` | `final class StickyCloseDot` | The dot in the card's top-right corner that puts it away |
 | Sticky out/away | `func openSticky` | `openSticky` / `putAwaySticky` / `syncStickies` on `PlainTextView` |
 | `PlainTextView` | `final class PlainTextView` | The `NSTextView` subclass — bullets, ruling, cursors, paste, `applyTheme` |
 | `HouseField` | `struct HouseField` | The app's only text field |
@@ -198,17 +196,24 @@ deleted range collapse to the edit point rather than dying. `syncStickies`
 rebuilds positions on every layout pass. A card measures its own height, and
 must be width-set *before* measuring or long notes load at default size.
 
-**A sticky is a crumpled ball until it is opened** — the same as on the
-iPhone port (`~/Documents/Claude Code/JUI-iOS`), and from the same code. The
-ball sits in the sticky's margin, just past where the ruling ends, beside its
-line; two on one line stack. Clicking one runs the fold in `Crumple.swift`: a
-SceneKit sheet printed with a picture of the card (`StickyView.picture()`),
-lifting out of the ball and opening flat into the card's place. **The real card
-is hidden until that sheet lies flat**, then shown, given the caret, and its
-flourish draws itself on — every opening, not only the first. Losing focus (a
-click anywhere else, or done) puts it away the same way round; a sticky that is
-deleted or was never written in crumples to nothing and is removed. One is out
-at a time — taking out another puts the first straight back without a fold.
+**A sticky is a crumpled ball until it is opened** — the fold is the iPhone
+port's (`~/Documents/Claude Code/JUI-iOS`), from the same code. The ball sits
+right after the sticky's words, raised onto the shoulder of the last one like a
+footnote mark — 14pt, up in the air between the letters and the rule above, so
+it marks the words without covering the next one (`wordsEnd`); two ending at
+the same place sit side by side. (The phone keeps its ball in the margin.)
+Clicking the ball runs the fold in `Crumple.swift`: a SceneKit sheet printed
+with a picture of the card (`StickyView.picture()`), lifting out of the ball
+and flying out to open flat in the sticky's margin, level with that line.
+**The real card is hidden until that sheet lies flat**, then shown, given the
+caret, and its flourish draws itself on — every opening, not only the first.
+Losing focus (a click anywhere else, or the dot in the card's top-right corner)
+puts it away the same way round. The card's words wrap around the dot — an
+exclusion path on its text container — so nothing runs under it. There are no
+delete or done buttons: delete is on the right-click menu of the card and of
+the ball. A sticky that is deleted or was never written in crumples to nothing
+and is removed. One is out at a time — taking out another puts the first
+straight back without a fold.
 Reduce Motion skips the fold. The card is made fresh per opening and the page
 holds only that one; everything else on the page is a ball.
 
@@ -624,7 +629,7 @@ Two halves have to be kept in step:
    attributes have to be pushed. That's what `PlainTextView.applyTheme()` is
    for — `RichTextEditor.updateNSView` calls it when `themeID` changes, and it
    fans out to `SmoothCaret`, `SelectionIconView`, the open `StickyView`, every
-   `StickyBallView`, the two `StampButton`s, and the
+   `StickyBallView`, and the
    traffic-light overlay in the title bar. **Any new AppKit view that holds a
    colour needs an `applyTheme()` and a call added to that fan-out.**
 

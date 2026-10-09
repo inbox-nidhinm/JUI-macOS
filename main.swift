@@ -1382,6 +1382,17 @@ final class StickyView: NSView, NSTextViewDelegate {
     var onLayoutNeeded: (() -> Void)?
     /// The sticky's text gained or lost focus.
     var onFocusChange: (() -> Void)?
+    /// The close dot was clicked: put the card away.
+    var onClose: (() -> Void)?
+
+    // The way to put a card away on purpose — a small dot in the top-right
+    // corner, where a sheet of paper is picked up by. Clicking anywhere off the
+    // card does the same; this is for when the pointer is already on it. The
+    // card's words wrap around it (`updateExclusion`), so nothing runs under it.
+    private let closeDot = StickyCloseDot()
+    static let closeDotInset: CGFloat = 14 // its centre, from the top and right edges
+    /// Off for the paper a ball is crumpled from and a card's blank reverse.
+    var showsCloseDot = true { didSet { closeDot.isHidden = !showsCloseDot } }
 
     // Which frame of the flourish is showing, when it shows at all. Until the
     // card has opened out flat there is no flourish on it; then it draws itself
@@ -1409,6 +1420,8 @@ final class StickyView: NSView, NSTextViewDelegate {
         noteView.menuProvider = { [weak self] in self?.stickyMenu() ?? NSMenu() }
         noteView.onFocusChange = { [weak self] in self?.onFocusChange?() }
         addSubview(noteView)
+        closeDot.onClick = { [weak self] in self?.onClose?() }
+        addSubview(closeDot)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -1418,6 +1431,26 @@ final class StickyView: NSView, NSTextViewDelegate {
         noteView.frame = NSRect(
             x: 0, y: bottomReserve,
             width: bounds.width, height: max(bounds.height - bottomReserve, 0))
+        updateExclusion()
+        let side = StickyCloseDot.hitSide
+        closeDot.frame = NSRect(x: bounds.width - Self.closeDotInset - side / 2,
+                                y: bounds.height - Self.closeDotInset - side / 2,
+                                width: side, height: side)
+    }
+
+    /// Keeps the first line's end clear of the close dot. In the text
+    /// container's own coordinates, which start inside the text inset: the
+    /// dot's left edge, less a little air, to the container's right edge, and
+    /// down as far as the dot reaches.
+    private func updateExclusion() {
+        guard let tc = noteView.textContainer else { return }
+        let width = noteView.frame.width - Self.textInset.width * 2
+        let reach = Self.closeDotInset + StickyCloseDot.diameter / 2 - Self.textInset.height
+        let left = width - (Self.closeDotInset - Self.textInset.width) - StickyCloseDot.diameter / 2 - 4
+        let rect = NSRect(x: left, y: 0, width: max(width - left, 0), height: max(reach + 2, 0))
+        if tc.exclusionPaths.first?.bounds != rect {
+            tc.exclusionPaths = [NSBezierPath(rect: rect)]
+        }
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -1553,6 +1586,7 @@ final class StickyView: NSView, NSTextViewDelegate {
 
     func applyTheme() {
         noteView.applyTheme()
+        closeDot.needsDisplay = true
         needsDisplay = true // the stamp body and its flourish are drawn by hand
     }
 
@@ -1582,6 +1616,7 @@ final class StickyView: NSView, NSTextViewDelegate {
     // line to go back to.
     override func hitTest(_ point: NSPoint) -> NSView? {
         let view = super.hitTest(point)
+        if view === closeDot { return view }
         if view != nil, !isEditing { return self }
         return view
     }
@@ -1612,6 +1647,7 @@ final class StickyView: NSView, NSTextViewDelegate {
                 x: 0, y: bottomReserve,
                 width: bounds.width, height: max(bounds.height - bottomReserve, 100))
         }
+        updateExclusion() // the dot can push a word onto the next line
         lm.ensureLayout(for: tc)
         return max(lm.usedRect(for: tc).height + Self.textInset.height * 2 + bottomReserve, bounds.width)
     }
@@ -1651,10 +1687,50 @@ final class SelectionIconView: NSView {
     override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
 }
 
+// MARK: - The card's close dot
+
+// A small solid dot in the ink's muted step, a step firmer under the pointer.
+// The view is larger than the dot, so the pointer can find it.
+final class StickyCloseDot: NSView {
+    var onClick: (() -> Void)?
+    static let diameter: CGFloat = 9
+    static let hitSide: CGFloat = 22
+    private var hovered = false { didSet { needsDisplay = true } }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel("Put sticky note away")
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // inkMuted at rest, inkStrong under the pointer — the ladder's steps
+        Style.ink.withAlphaComponent(hovered ? 0.85 : 0.55).setFill()
+        let d = Self.diameter
+        NSBezierPath(ovalIn: NSRect(x: (bounds.width - d) / 2, y: (bounds.height - d) / 2,
+                                    width: d, height: d)).fill()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways],
+                                       owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovered = true }
+    override func mouseExited(with event: NSEvent) { hovered = false }
+    override func mouseDown(with event: NSEvent) { onClick?() }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+}
+
 // MARK: - The sticky put away
 
-// A sticky, put away, is a small crumpled ball of sticky paper in its margin,
-// beside the line it is anchored to — the same crumpled sheet the opening
+// A sticky, put away, is a small crumpled ball of sticky paper sitting just
+// after the words it is about — the same crumpled sheet the opening
 // starts from (Crumple.swift), rendered once per mood. Clicking it opens it out
 // into the card.
 //
@@ -1664,7 +1740,7 @@ final class StickyBallView: NSView {
     var onClick: (() -> Void)?
     var onDelete: (() -> Void)?
 
-    static let hitSize = NSSize(width: 30, height: 40)
+    static let hitSize = NSSize(width: 22, height: 22)
 
     init(id: UUID) {
         stickyID = id
@@ -1710,106 +1786,6 @@ final class StickyBallView: NSView {
     }
 
     @objc private func deleteSticky() { onDelete?() }
-
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
-    func applyTheme() { needsDisplay = true }
-}
-
-// MARK: - The stamp's buttons
-
-// Delete and done, under a sticky while it is being written in: the hand-drawn
-// marks from the Figma system (node 330:433), the same ones the phone shows. A
-// sticky that is only being looked at is just the stamp, and the right-click
-// menu still has both — these are for the moment the hand is already on the
-// keyboard and the pointer is nearby.
-//
-// The marks are the system's own vectors, composed into its 60 × 60 tile and
-// rasterised by `Art/render-marks.swift` (see build.sh), so each lands exactly
-// where the frame places it. They ship white and are tinted at draw time, in
-// the ink's muted step — the system draws them in #967654, which is that step
-// (see CLAUDE.md, "Where the system and the ink ladder disagree") — so they
-// follow every theme as the ink does.
-final class StampButton: NSView {
-    enum Kind: String {
-        case delete = "StickyDelete", done = "StickyDone"
-    }
-
-    // The system's tile is 60, and the app scales the system by 16/22 — the
-    // other icon buttons are 44 for the same reason.
-    static let side: CGFloat = 44
-    static var scale: CGFloat { side / 60 }
-    // Wider than the system's 17 (scaled to 12.5), so the two marks read as two
-    // choices rather than a pair.
-    static let gap: CGFloat = 28
-    // Clear air between the stamp and the buttons hanging under it.
-    static let drop: CGFloat = 14
-    // A faint tile behind each mark: a tone, not a colour — black at 6% is a
-    // multiply by 0.94, a soft step down from whatever it sits on in every
-    // theme, much lighter than the system's papered panel tile.
-    static let tileTone = NSColor(white: 0, alpha: 0.06)
-
-    let kind: Kind
-    var onClick: (() -> Void)?
-    private var pressed = false { didSet { needsDisplay = true } }
-
-    init(kind: Kind) {
-        self.kind = kind
-        super.init(frame: NSRect(x: 0, y: 0, width: Self.side, height: Self.side))
-        setAccessibilityElement(true)
-        setAccessibilityRole(.button)
-        setAccessibilityLabel(kind == .delete ? "Delete sticky note" : "Done")
-    }
-
-    required init?(coder: NSCoder) { fatalError("unused") }
-
-    // Tinted copies for the current theme only, rebuilt on a change — the same
-    // shape as `StickyView`'s flourish cache, for the same reason.
-    private static var marks: [Kind: NSImage] = [:]
-    private static var marksTheme: String?
-
-    private static func mark(_ kind: Kind) -> NSImage? {
-        if marksTheme != Style.theme.id {
-            marks.removeAll()
-            marksTheme = Style.theme.id
-        }
-        if let hit = marks[kind] { return hit }
-        guard let url = Bundle.main.url(
-                forResource: kind.rawValue, withExtension: "png", subdirectory: "StickyButtons"),
-              let src = NSImage(contentsOf: url) else { return nil }
-        let out = NSImage(size: src.size)
-        out.lockFocus()
-        src.draw(at: .zero, from: .zero, operation: .sourceOver, fraction: 1)
-        Style.ink.withAlphaComponent(0.55).set() // inkMuted
-        NSRect(origin: .zero, size: src.size).fill(using: .sourceAtop)
-        out.unlockFocus()
-        marks[kind] = out
-        return out
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        // Under the pointer the mark settles a little, as the phone's does
-        // under the finger.
-        let tile = pressed ? bounds.insetBy(dx: bounds.width * 0.05, dy: bounds.height * 0.05) : bounds
-        Self.tileTone.setFill()
-        let radius = 14 * Self.scale * tile.width / bounds.width
-        NSBezierPath(roundedRect: tile, xRadius: radius, yRadius: radius).fill()
-        Self.mark(kind)?.draw(in: tile, from: .zero, operation: .sourceOver, fraction: 1)
-    }
-
-    // Fires on release inside, like a button, and never takes focus — the
-    // sticky keeps it until the action decides where it goes.
-    override func mouseDown(with event: NSEvent) {
-        pressed = true
-        while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
-            let inside = bounds.contains(convert(next.locationInWindow, from: nil))
-            if next.type == .leftMouseUp {
-                pressed = false
-                if inside { onClick?() }
-                break
-            }
-            pressed = inside
-        }
-    }
 
     override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
     func applyTheme() { needsDisplay = true }
@@ -1932,8 +1908,6 @@ final class PlainTextView: NSTextView {
         return director
     }()
     private var washedRanges: [[Int]] = []
-    private let deleteButton = StampButton(kind: .delete)
-    private let doneButton = StampButton(kind: .done)
     private let selectionIcon = SelectionIconView()
     private var annotationsConfigured = false
 
@@ -1947,21 +1921,6 @@ final class PlainTextView: NSTextView {
         selectionIcon.isHidden = true
         selectionIcon.onClick = { [weak self] in self?.createStickyFromSelection() }
         addSubview(selectionIcon)
-        for button in [deleteButton, doneButton] {
-            button.isHidden = true
-            addSubview(button)
-        }
-        // Either way the note gets focus back, with its caret where it was —
-        // what a click in the margin does.
-        deleteButton.onClick = { [weak self] in
-            guard let self, let id = self.openID else { return }
-            self.putAwaySticky(id, deleted: true)
-            self.window?.makeFirstResponder(self)
-        }
-        doneButton.onClick = { [weak self] in
-            guard let self else { return } // losing focus puts it away
-            self.window?.makeFirstResponder(self)
-        }
         // The sheet is drawn over everything else on the page, cards included.
         addSubview(crumple.view)
         // Compiled now, a beat after the page is up, not on the first click.
@@ -1974,24 +1933,9 @@ final class PlainTextView: NSTextView {
     /// nothing on it.
     static func blankCard(size: NSSize) -> NSImage {
         let view = StickyView(id: UUID(), text: "")
+        view.showsCloseDot = false
         view.frame = NSRect(origin: .zero, size: size)
         return view.picture()
-    }
-
-    /// The open card gets its buttons hung under it while it is written in.
-    private func placeStampButtons() {
-        guard let card, card.stickyID == openID, !card.isHidden, card.isEditing else {
-            deleteButton.isHidden = true
-            doneButton.isHidden = true
-            return
-        }
-        let side = StampButton.side
-        let left = card.frame.midX - side - StampButton.gap / 2
-        let top = card.frame.maxY + StampButton.drop
-        deleteButton.frame = NSRect(x: left, y: top, width: side, height: side)
-        doneButton.frame = NSRect(x: left + side + StampButton.gap, y: top, width: side, height: side)
-        deleteButton.isHidden = false
-        doneButton.isHidden = false
     }
 
     // A selection in the left half of the window sends its sticky to the left
@@ -2054,6 +1998,11 @@ final class PlainTextView: NSTextView {
         }
         view.onLayoutNeeded = { [weak self] in self?.syncStickies() }
         view.onFocusChange = { [weak self] in self?.cardFocusChanged(id) }
+        view.onClose = { [weak self] in
+            guard let self else { return }
+            self.putAwaySticky(id)
+            self.window?.makeFirstResponder(self) // the caret back where it was
+        }
         view.isHidden = true // until the sheet has opened out flat in its place
         addSubview(view, positioned: .below, relativeTo: crumple.view)
         card = view
@@ -2101,7 +2050,6 @@ final class PlainTextView: NSTextView {
         card.finishFlourish()
         crumple.close(id, face: card.picture(), back: Self.blankCard(size: card.frame.size),
                       frame: card.frame, mark: mark, stage: stageFrame(card: card.frame, mark: mark))
-        placeStampButtons()
     }
 
     /// The sheet has opened out flat: the real card takes its place, draws its
@@ -2123,7 +2071,6 @@ final class PlainTextView: NSTextView {
     private func dropCard() {
         card?.removeFromSuperview()
         card = nil
-        placeStampButtons()
     }
 
     /// Clicked away from, the card goes back into its ball.
@@ -2157,12 +2104,33 @@ final class PlainTextView: NSTextView {
 
     // MARK: Placing balls and the card
 
-    /// Where line `top`'s ball sits for a sticky in this margin: just past the
-    /// end of the ruling, where the rule runs out into the margin — close
-    /// enough to read as belonging to the line.
-    private func ballX(left: Bool) -> CGFloat {
-        let reach = Style.ruleOverhang + 18
-        return left ? Style.sideMargin - reach : bounds.width - Style.sideMargin + reach
+    /// Where a sticky's words end, and the top of the line they end on. The
+    /// ball sits there, on the shoulder of the last word, like a footnote mark.
+    /// Trailing spaces and newlines carry no ink, so they don't count; a
+    /// sticky whose words were all deleted sits where they were.
+    private func wordsEnd(for sticky: Sticky, lm: NSLayoutManager,
+                          tc: NSTextContainer) -> (x: CGFloat, lineTop: CGFloat) {
+        let text = string as NSString
+        let origin = textContainerOrigin
+        guard lm.numberOfGlyphs > 0, text.length > 0 else {
+            return (origin.x + tc.lineFragmentPadding, origin.y)
+        }
+        let start = min(max(sticky.start, 0), text.length)
+        var last = min(start + max(sticky.length, 0), text.length)
+        while last > start, let scalar = Unicode.Scalar(text.character(at: last - 1)),
+              CharacterSet.whitespacesAndNewlines.contains(scalar) {
+            last -= 1
+        }
+        if last > start || start == text.length {
+            // the last inked character: of the words, or of the note
+            let glyph = min(lm.glyphIndexForCharacter(at: max(last, start) - 1), lm.numberOfGlyphs - 1)
+            let fragment = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            let ink = lm.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: tc)
+            return (ink.maxX + origin.x, fragment.minY + origin.y)
+        }
+        let glyph = min(lm.glyphIndexForCharacter(at: start), lm.numberOfGlyphs - 1)
+        let fragment = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        return (fragment.minX + lm.location(forGlyphAt: glyph).x + origin.x, fragment.minY + origin.y)
     }
 
     // Rebuild/reposition the balls, and the card that is out, from their
@@ -2189,10 +2157,10 @@ final class PlainTextView: NSTextView {
             crumple.reset()
             dropCard()
         }
-        guard let lm = layoutManager else { return }
-        let textLength = (string as NSString).length
+        guard let lm = layoutManager, let tc = textContainer else { return }
         let size = StickyBallView.hitSize
-        var perLine: [CGFloat: Int] = [:]
+        let diameter = CGFloat(CrumpleSheet.ballDiameter)
+        var perSpot: [CGPoint: Int] = [:]
         for sticky in list.sorted(by: { $0.start < $1.start }) {
             let ball = balls[sticky.id] ?? {
                 let b = StickyBallView(id: sticky.id)
@@ -2202,36 +2170,34 @@ final class PlainTextView: NSTextView {
                 balls[sticky.id] = b
                 return b
             }()
-            var top = textContainerOrigin.y
-            if lm.numberOfGlyphs > 0 {
-                let glyph = lm.glyphIndexForCharacter(at: max(0, min(sticky.start, textLength - 1)))
-                top += lm.lineFragmentRect(forGlyphAt: min(glyph, lm.numberOfGlyphs - 1),
-                                           effectiveRange: nil).minY
-            }
-            let left = sticky.left == true
-            // Two stickies on one line stack like stamps on an envelope, each a
-            // little lower and further out than the last, rather than covering
-            // one another.
-            let stacked = CGFloat(perLine[top, default: 0])
-            perLine[top, default: 0] += 1
-            let centre = CGPoint(x: ballX(left: left) + (left ? -2 : 2) * stacked,
-                                 y: Style.ruledCentre(forLineTop: top) + 6 * stacked)
+            // The ball sits right after the sticky's words, raised onto the
+            // shoulder of the last one — up in the air between the letters and
+            // the rule above, where it marks the words without covering the
+            // next one. Two stickies ending at the same place sit side by side.
+            let end = wordsEnd(for: sticky, lm: lm, tc: tc)
+            let spot = CGPoint(x: end.x, y: end.lineTop)
+            let stacked = CGFloat(perSpot[spot, default: 0])
+            perSpot[spot, default: 0] += 1
+            let centre = CGPoint(
+                x: end.x + 3 + diameter / 2 + (diameter + 2) * stacked,
+                y: Style.ruledCentre(forLineTop: end.lineTop) - Style.inkHeight / 2 - 3)
             ball.frame = NSRect(x: centre.x - size.width / 2, y: centre.y - size.height / 2,
                                 width: size.width, height: size.height)
 
-            // The card that is out opens where its ball was: its top level with
-            // the ball's, across the margin the ball sits in.
+            // The card that is out opens in the sticky's margin, level with the
+            // line its ball is on, so the page stays readable around it; the
+            // sheet flies out to it from the words.
             if let card, card.stickyID == sticky.id, openID == sticky.id {
                 if !card.isEditing { card.setText(sticky.text) }
                 let width = Self.cardWidth
                 card.frame.size.width = width // set width before measuring wrap height
+                let left = sticky.left == true
                 let x = left ? Style.sideMargin - width - 14 : bounds.width - Style.sideMargin + 14
-                let y = max(8, centre.y - CGFloat(CrumpleSheet.ballDiameter) / 2)
+                let y = max(8, Style.ruledCentre(forLineTop: end.lineTop) - 16)
                 card.frame = NSRect(x: x, y: y, width: width, height: card.desiredHeight)
             }
         }
         showFlight()
-        placeStampButtons()
     }
 
     override func layout() {
@@ -2272,8 +2238,6 @@ final class PlainTextView: NSTextView {
         selectionIcon.applyTheme()
         card?.applyTheme()
         balls.values.forEach { $0.applyTheme() }
-        deleteButton.applyTheme()
-        doneButton.applyTheme()
         // the cream dots covering the traffic lights live in the title bar, well
         // outside this view's tree
         if let titlebar = window?.standardWindowButton(.closeButton)?.superview {

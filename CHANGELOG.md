@@ -232,6 +232,20 @@ A plain writing pad for Juilee. Built July 16–17, 2026.
     old systems any more; the one availability gate went, and every
     `onChange` takes the current two-parameter form.
 
+15. **The sticky's ball moves to its words, and the card loses its buttons.**
+    In use the margin was too far from what a sticky is about: the ball now
+    sits right after the anchored words, raised onto the shoulder of the last
+    one like a footnote mark, and is smaller (14pt, from 30) so it fits in the
+    air above the line without covering the next word. The card still opens
+    in the margin, and the sheet flies out to it from the words.
+
+    The delete and done marks under the card are gone, and the build step and
+    vectors that drew them with them. Putting a card away is a small dot in
+    its top-right corner — or, as before, a click anywhere else — and the
+    card's words wrap around the dot. Delete lives on the right-click menu of
+    the card and the ball; a sticky emptied and put away still crumples to
+    nothing.
+
 ## Minor updates & polish
 
 - **New folder without the context menu**: the folder grid ends with a `+`
