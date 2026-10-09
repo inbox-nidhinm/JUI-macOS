@@ -72,9 +72,9 @@ enum Crease {
 struct CrumpleSheet {
     /// How crinkled the ball is, 0…1 — the prototype's slider, settled at 0.8.
     static let depth: Float = 0.8
-    /// The ball beside the words, across — small enough to sit in the air
-    /// above the line without covering the next word.
-    static let ballDiameter: Float = 14
+    /// The ball in its line, across — a little over the type's height, in a
+    /// room of its own after the words (see `PlainTextView.slotWidth`).
+    static let ballDiameter: Float = 24
     /// The centre of the sheet opens first and the edges last, by this much
     /// of the unfold.
     static let delaySpread: Float = 0.32
@@ -359,7 +359,7 @@ enum CrumpleArt {
 
     /// The ball's picture, across — a little more than the ball, for its
     /// creases to stand out from.
-    static let ballCanvas: CGFloat = 18
+    static let ballCanvas: CGFloat = 30
 }
 
 // MARK: - Running it

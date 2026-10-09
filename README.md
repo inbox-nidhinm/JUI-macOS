@@ -17,9 +17,10 @@ no package manager, no dependencies.
 - **Folders**, one level deep, that are real subdirectories on disk. Deleting a
   folder deletes the notes inside it; there is no trash.
 - **Sticky notes** anchored to a range of text rather than to pixels, which
-  survive edits and reflow. Put away, a sticky is a small crumpled ball
-  sitting just after the words it is about, which carry a faint wash of its
-  colour; clicked, the ball opens out into a postage-stamp card in the margin.
+  survive edits and reflow. Put away, a sticky is a small crumpled ball in
+  the line, right after the words it is about, which carry a faint wash of
+  its colour; clicked, the ball opens out into a postage-stamp card right
+  there, which can be dragged anywhere on the page.
 - **⌘K search** across every note, with snippets, folder prefixes, and a command
   row or two.
 - **Six themes** — cream, mint, sky, coral, lilac, orchid — applied instantly.

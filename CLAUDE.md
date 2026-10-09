@@ -52,7 +52,8 @@ enough to be believed.
 | `SmoothCaret` | `final class SmoothCaret` | Shared caret glide (note editor *and* stickies) |
 | `StickyView` | `final class StickyView` | The open sticky's card: postage stamp, drawn by hand |
 | `StickyBallView` | `final class StickyBallView` | A sticky put away: the crumpled ball after its words |
-| `StickyCloseDot` | `final class StickyCloseDot` | The dot in the card's top-right corner that puts it away |
+| `StickyCloseDot` | `final class StickyCloseDot` | The ring in the card's top-right corner that puts it away |
+| Ball's room in the line | `func applyStickySlots` | The editor-only spacing a ball sits in |
 | Sticky out/away | `func openSticky` | `openSticky` / `putAwaySticky` / `syncStickies` on `PlainTextView` |
 | `PlainTextView` | `final class PlainTextView` | The `NSTextView` subclass — bullets, ruling, cursors, paste, `applyTheme` |
 | `HouseField` | `struct HouseField` | The app's only text field |
@@ -197,15 +198,15 @@ rebuilds positions on every layout pass. A card measures its own height, and
 must be width-set *before* measuring or long notes load at default size.
 
 **A sticky is a crumpled ball until it is opened** — the fold is the iPhone
-port's (`~/Documents/Claude Code/JUI-iOS`), from the same code. The ball sits
-right after the sticky's words, raised onto the shoulder of the last one like a
-footnote mark — 14pt, up in the air between the letters and the rule above, so
-it marks the words without covering the next one (`wordsEnd`); two ending at
-the same place sit side by side. (The phone keeps its ball in the margin.)
+port's (`~/Documents/Claude Code/JUI-iOS`), from the same code. The ball has a
+place of its own *in the line*, right after the sticky's words, and the
+sentence carries on after it — 24pt, centred on the line like the words, as in
+the prototype the design came from (`JUI-iOS/prototypes/crumpled-sticky`). Two
+on the same words sit side by side. (The phone keeps its ball in the margin.)
 Clicking the ball runs the fold in `Crumple.swift`: a SceneKit sheet printed
 with a picture of the card (`StickyView.picture()`), lifting out of the ball
-and flying out to open flat in the sticky's margin, level with that line.
-**The real card is hidden until that sheet lies flat**, then shown, given the
+and opening flat right there, over the page — or wherever the card was last
+dragged to. **The real card is hidden until that sheet lies flat**, then shown, given the
 caret, and its flourish draws itself on — every opening, not only the first.
 Losing focus (a click anywhere else, or the dot in the card's top-right corner)
 puts it away the same way round. The card's words wrap around the dot — an
@@ -225,9 +226,21 @@ Rules that keep it working:
 - **The fold's coordinates are the page's**, y down: the director takes the
   card's frame, the ball's centre and a stage rect around both, all in page
   points, and converts.
-- **There is no pinning any more.** Stickies used to drag out onto the page;
-  the ball has nowhere to go back to from there. `pinX`/`pinY`/`rotation` stay
-  in `Sticky`, unread, so files from older builds decode and keep them.
+- **The ball's room in the line is spacing, laid on in the editor only.**
+  `applyStickySlots` puts `.kern` (marked `.stickySlot`) on the last inked
+  letter of each sticky's words — enough for the ball and its air — and takes
+  it off wherever it no longer belongs. `NotesStore.textChanged` strips both
+  on the way back from the editor, which is the only way text reaches the
+  store, so the spacing never reaches the RTF or the phone. It is applied a
+  turn of the loop after `syncStickies` (which runs from layout, where the
+  storage can't be edited) and only when it differs from what is there, so it
+  can't loop. `typingAttributes` drops it, or typing after a sticky's words
+  would carry the gap along. The wash ends at the letter, not the gap.
+- **A card can be dragged anywhere on the page** — by its paper (the
+  perforated edge and the flourish band, open-hand cursor), never its words,
+  which take clicks as words. It then opens there from now on: `pinX`/`pinY`,
+  in document points. "Return to Its Words" on its menu forgets the spot.
+  `syncStickies` leaves a card alone while `isDragging`.
 
 **The words a sticky is about carry a wash** of the sticky colour at 26%,
 painted in `drawBackground` after the ruling — so beneath the text — sized and

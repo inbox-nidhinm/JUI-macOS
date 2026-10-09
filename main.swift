@@ -405,10 +405,10 @@ struct SearchHit: Identifiable {
 
 // A margin annotation anchored to a character range of the note, not pixels.
 //
-// `pinX`/`pinY`/`rotation` are from when a sticky could be dragged out onto
-// the page and left there. That went with the crumpled ball — a sticky lives in
-// its margin now, on the Mac as on the phone — but the fields stay, unread, so
-// a file written by an older build still decodes and keeps them when rewritten.
+// `pinX`/`pinY` are where its card was last dragged to, in document points —
+// it opens there next time instead of at its ball. `rotation` is from an older
+// build that tilted dragged cards; it stays, unread, so those files still
+// decode and keep it.
 struct Sticky: Identifiable, Codable, Equatable {
     let id: UUID
     var start: Int
@@ -418,6 +418,12 @@ struct Sticky: Identifiable, Codable, Equatable {
     var pinY: Double?
     var rotation: Double?
     var left: Bool? // which margin it lives in; nil/false = right
+}
+
+extension NSAttributedString.Key {
+    /// Marks the spacing that makes room for a sticky's ball in its line —
+    /// editor only, never saved (see `NotesStore.textChanged`).
+    static let stickySlot = NSAttributedString.Key("JUIStickySlot")
 }
 
 final class NotesStore: ObservableObject {
@@ -547,7 +553,15 @@ final class NotesStore: ObservableObject {
     }
 
     func textChanged(_ new: NSAttributedString) {
-        attr = NSAttributedString(attributedString: new)
+        // The room a sticky's ball takes in its line is spacing laid on in the
+        // editor (`PlainTextView.applyStickySlots`), never part of the note:
+        // stripped here, on the one way text comes back from the editor, so it
+        // can't reach the RTF — or the phone, which reads the same file.
+        let clean = NSMutableAttributedString(attributedString: new)
+        let full = NSRange(location: 0, length: clean.length)
+        clean.removeAttribute(.kern, range: full)
+        clean.removeAttribute(.stickySlot, range: full)
+        attr = clean
         updateWordCount()
         scheduleSave()
     }
@@ -582,6 +596,21 @@ final class NotesStore: ObservableObject {
         stickies.append(sticky)
         scheduleSave()
         return sticky.id
+    }
+
+    func pinSticky(_ id: UUID, x: Double, y: Double) {
+        guard let i = stickies.firstIndex(where: { $0.id == id }) else { return }
+        stickies[i].pinX = x
+        stickies[i].pinY = y
+        scheduleSave()
+    }
+
+    func unpinSticky(_ id: UUID) {
+        guard let i = stickies.firstIndex(where: { $0.id == id }) else { return }
+        stickies[i].pinX = nil
+        stickies[i].pinY = nil
+        stickies[i].rotation = nil
+        scheduleSave()
     }
 
     func updateStickyText(_ id: UUID, _ text: String) {
@@ -1384,6 +1413,13 @@ final class StickyView: NSView, NSTextViewDelegate {
     var onFocusChange: (() -> Void)?
     /// The close dot was clicked: put the card away.
     var onClose: (() -> Void)?
+    /// The card was dragged to a new place on the page (its new origin).
+    var onMoved: ((NSPoint) -> Void)?
+    /// "Return to Its Words" from the menu: forget where it was dragged.
+    var onReturn: (() -> Void)?
+    var isPinned: (() -> Bool)?
+    /// True while the card is being dragged, so the page leaves it be.
+    private(set) var isDragging = false
 
     // The way to put a card away on purpose — a small dot in the top-right
     // corner, where a sheet of paper is picked up by. Clicking anywhere off the
@@ -1456,6 +1492,7 @@ final class StickyView: NSView, NSTextViewDelegate {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         needsDisplay = true // perforation count depends on the size
+        window?.invalidateCursorRects(for: self) // so do the drag handles
     }
 
     // Postage-stamp background: the rectangle with semicircular perforations
@@ -1602,26 +1639,80 @@ final class StickyView: NSView, NSTextViewDelegate {
         let delete = NSMenuItem(title: "Delete Note", action: #selector(deleteSticky), keyEquivalent: "")
         delete.target = self
         menu.addItem(delete)
+        if isPinned?() == true {
+            let back = NSMenuItem(title: "Return to Its Words", action: #selector(returnToWords),
+                                  keyEquivalent: "")
+            back.target = self
+            menu.addItem(back)
+        }
         return menu
     }
 
     @objc private func deleteSticky() { onDelete?() }
+    @objc private func returnToWords() { onReturn?() }
 
     override func menu(for event: NSEvent) -> NSMenu? { stickyMenu() }
 
-    // When not editing, a click anywhere on the stamp puts the caret in it;
-    // while editing, clicks go to the text as usual. It used to be draggable
-    // out onto the page, too — that went with the crumpled ball: a sticky put
-    // away is a ball beside its line, and one out on the page would have no
-    // line to go back to.
+    // The card opens right where its ball was, over the page. To get it out of
+    // the way it can be dragged anywhere, by its paper rather than its words:
+    // the perforated edge, or the band at the foot where the flourish is. Words
+    // take clicks as words. Not being written in, the whole card is a handle.
+    private static let grabEdge: CGFloat = 10
+
+    private func isHandle(_ point: NSPoint) -> Bool {
+        let p = convert(point, from: superview)
+        guard bounds.contains(p) else { return false }
+        if !isEditing { return true }
+        return p.y < bottomReserve || p.x < Self.grabEdge || p.x > bounds.width - Self.grabEdge
+            || p.y > bounds.height - Self.grabEdge
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         let view = super.hitTest(point)
         if view === closeDot { return view }
-        if view != nil, !isEditing { return self }
+        if view != nil, isHandle(point) { return self }
         return view
     }
 
-    override func mouseDown(with event: NSEvent) { focus() }
+    override func resetCursorRects() {
+        let w = bounds.width, h = bounds.height, e = Self.grabEdge
+        for rect in [NSRect(x: 0, y: 0, width: w, height: bottomReserve),
+                     NSRect(x: 0, y: 0, width: e, height: h),
+                     NSRect(x: w - e, y: 0, width: e, height: h),
+                     NSRect(x: 0, y: h - e, width: w, height: e)] {
+            addCursorRect(rect, cursor: .openHand)
+        }
+    }
+
+    // Drag to move; a plain click puts the caret in it.
+    override func mouseDown(with event: NSEvent) {
+        let startWindow = event.locationInWindow
+        let startOrigin = frame.origin
+        var dragged = false
+        while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            if next.type == .leftMouseUp { break }
+            let dx = next.locationInWindow.x - startWindow.x
+            let dy = next.locationInWindow.y - startWindow.y
+            if !dragged, abs(dx) > 3 || abs(dy) > 3 {
+                dragged = true
+                isDragging = true
+                NSCursor.closedHand.push()
+            }
+            if dragged {
+                // the page is flipped and the window is not; kept wholly on
+                // the page so it can't be lost off an edge
+                let maxX = max(8, (superview?.bounds.width ?? .greatestFiniteMagnitude) - frame.width - 8)
+                frame.origin = NSPoint(x: min(max(startOrigin.x + dx, 8), maxX),
+                                       y: max(startOrigin.y - dy, 8))
+            }
+        }
+        if dragged {
+            NSCursor.pop()
+            isDragging = false
+            onMoved?(frame.origin)
+        }
+        focus()
+    }
 
     var noteText: String { noteView.string }
     var isEditing: Bool { window?.firstResponder === noteView }
@@ -1689,11 +1780,13 @@ final class SelectionIconView: NSView {
 
 // MARK: - The card's close dot
 
-// A small solid dot in the ink's muted step, a step firmer under the pointer.
-// The view is larger than the dot, so the pointer can find it.
+// A small ring in the ink's muted step — drawn, not filled, so it reads as a
+// thing to press rather than a mark on the paper — that fills in under the
+// pointer. The view is larger than the ring, so the pointer can find it.
 final class StickyCloseDot: NSView {
     var onClick: (() -> Void)?
-    static let diameter: CGFloat = 9
+    static let diameter: CGFloat = 11
+    static let stroke: CGFloat = 1.6
     static let hitSide: CGFloat = 22
     private var hovered = false { didSet { needsDisplay = true } }
 
@@ -1707,11 +1800,19 @@ final class StickyCloseDot: NSView {
     required init?(coder: NSCoder) { fatalError("unused") }
 
     override func draw(_ dirtyRect: NSRect) {
-        // inkMuted at rest, inkStrong under the pointer — the ladder's steps
-        Style.ink.withAlphaComponent(hovered ? 0.85 : 0.55).setFill()
+        // inkMuted, the ladder's step for marks like this. The stroke sits
+        // inside the ring's diameter, so filling it doesn't make it grow.
+        let ink = Style.ink.withAlphaComponent(0.55)
         let d = Self.diameter
-        NSBezierPath(ovalIn: NSRect(x: (bounds.width - d) / 2, y: (bounds.height - d) / 2,
-                                    width: d, height: d)).fill()
+        let ring = NSRect(x: (bounds.width - d) / 2, y: (bounds.height - d) / 2, width: d, height: d)
+        if hovered {
+            ink.setFill()
+            NSBezierPath(ovalIn: ring).fill()
+        }
+        ink.setStroke()
+        let path = NSBezierPath(ovalIn: ring.insetBy(dx: Self.stroke / 2, dy: Self.stroke / 2))
+        path.lineWidth = Self.stroke
+        path.stroke()
     }
 
     override func updateTrackingAreas() {
@@ -1740,7 +1841,7 @@ final class StickyBallView: NSView {
     var onClick: (() -> Void)?
     var onDelete: (() -> Void)?
 
-    static let hitSize = NSSize(width: 22, height: 22)
+    static let hitSize = NSSize(width: 28, height: 30)
 
     init(id: UUID) {
         stickyID = id
@@ -2003,6 +2104,14 @@ final class PlainTextView: NSTextView {
             self.putAwaySticky(id)
             self.window?.makeFirstResponder(self) // the caret back where it was
         }
+        // Dragged somewhere, it opens there from now on; the menu puts it back.
+        view.onMoved = { [weak self] origin in
+            self?.notesStore?.pinSticky(id, x: Double(origin.x), y: Double(origin.y))
+        }
+        view.onReturn = { [weak self] in self?.notesStore?.unpinSticky(id) }
+        view.isPinned = { [weak self] in
+            self?.notesStore?.stickies.first(where: { $0.id == id })?.pinX != nil
+        }
         view.isHidden = true // until the sheet has opened out flat in its place
         addSubview(view, positioned: .below, relativeTo: crumple.view)
         card = view
@@ -2104,33 +2213,115 @@ final class PlainTextView: NSTextView {
 
     // MARK: Placing balls and the card
 
-    /// Where a sticky's words end, and the top of the line they end on. The
-    /// ball sits there, on the shoulder of the last word, like a footnote mark.
-    /// Trailing spaces and newlines carry no ink, so they don't count; a
-    /// sticky whose words were all deleted sits where they were.
-    private func wordsEnd(for sticky: Sticky, lm: NSLayoutManager,
-                          tc: NSTextContainer) -> (x: CGFloat, lineTop: CGFloat) {
+    // A sticky's ball has a place of its own in the line, right after the
+    // words it is about, and the sentence carries on after it — nothing is
+    // covered and nothing moves when it opens. The room is made by spacing laid
+    // after the last letter of the words (`.kern`, marked `.stickySlot`), in the
+    // editor's storage only: `NotesStore.textChanged` strips it on the way
+    // back, so it never reaches the file. Laid on and taken off here, from the
+    // anchors, whenever they move.
+
+    /// Air between the last letter and the ball, and between two balls on the
+    /// same words.
+    static let slotLead: CGFloat = 8
+    static let slotGap: CGFloat = 2
+    static var slotBall: CGFloat { CGFloat(CrumpleSheet.ballDiameter) }
+
+    /// How much room `count` balls take after a word.
+    static func slotWidth(_ count: Int) -> CGFloat {
+        slotLead + CGFloat(count) * slotBall + CGFloat(max(count - 1, 0)) * slotGap
+    }
+
+    /// The character each sticky's ball follows — the last one with ink in its
+    /// words (trailing spaces and newlines carry none), or, if its words were
+    /// all deleted, the one before where they were — and the stickies sharing
+    /// it, in anchor order.
+    private func slotCharacters(_ list: [Sticky]) -> [Int: [UUID]] {
         let text = string as NSString
+        var out: [Int: [UUID]] = [:]
+        for sticky in list.sorted(by: { $0.start < $1.start }) {
+            let start = min(max(sticky.start, 0), text.length)
+            var last = min(start + max(sticky.length, 0), text.length)
+            while last > start, let scalar = Unicode.Scalar(text.character(at: last - 1)),
+                  CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                last -= 1
+            }
+            let at = last > start ? last - 1 : start - 1
+            guard at >= 0, at < text.length else { continue }
+            out[at, default: []].append(sticky.id)
+        }
+        return out
+    }
+
+    private var slotsPending = false
+
+    /// Lays the spacing on where `slots` says, and takes it off everywhere
+    /// else — a turn of the loop later, since this runs from layout and the
+    /// storage can't be edited mid-layout. Only when something has changed.
+    private func applyStickySlots(_ slots: [Int: [UUID]]) {
+        guard let storage = textStorage else { return }
+        var wanted: [Int: CGFloat] = [:]
+        for (at, ids) in slots { wanted[at] = Self.slotWidth(ids.count) }
+        var present: [Int: CGFloat] = [:]
+        storage.enumerateAttribute(.stickySlot, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard value != nil else { return }
+            for i in range.location..<NSMaxRange(range) {
+                present[i] = storage.attribute(.kern, at: i, effectiveRange: nil) as? CGFloat ?? 0
+            }
+        }
+        guard wanted != present, !slotsPending else { return }
+        slotsPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let storage = self.textStorage else { return }
+            self.slotsPending = false
+            // Collected, then applied — never written from inside the walk.
+            var marked: [NSRange] = []
+            storage.enumerateAttribute(.stickySlot, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+                if value != nil { marked.append(range) }
+            }
+            let slots = self.slotCharacters(self.notesStore?.stickies ?? [])
+            storage.beginEditing()
+            for range in marked {
+                storage.removeAttribute(.kern, range: range)
+                storage.removeAttribute(.stickySlot, range: range)
+            }
+            for (at, ids) in slots where at < storage.length {
+                let range = NSRange(location: at, length: 1)
+                storage.addAttribute(.kern, value: Self.slotWidth(ids.count), range: range)
+                storage.addAttribute(.stickySlot, value: true, range: range)
+            }
+            storage.endEditing()
+        }
+    }
+
+    // Typing straight after a sticky's words must not carry its spacing on to
+    // the new letters — a text view types with the attributes of the letter
+    // before the caret.
+    override var typingAttributes: [NSAttributedString.Key: Any] {
+        get {
+            var attrs = super.typingAttributes
+            attrs[.kern] = nil
+            attrs[.stickySlot] = nil
+            return attrs
+        }
+        set { super.typingAttributes = newValue }
+    }
+
+    /// Where the room after character `at` starts, and the top of its line.
+    private func slotStart(after at: Int, lm: NSLayoutManager) -> (x: CGFloat, lineTop: CGFloat) {
         let origin = textContainerOrigin
-        guard lm.numberOfGlyphs > 0, text.length > 0 else {
-            return (origin.x + tc.lineFragmentPadding, origin.y)
-        }
-        let start = min(max(sticky.start, 0), text.length)
-        var last = min(start + max(sticky.length, 0), text.length)
-        while last > start, let scalar = Unicode.Scalar(text.character(at: last - 1)),
-              CharacterSet.whitespacesAndNewlines.contains(scalar) {
-            last -= 1
-        }
-        if last > start || start == text.length {
-            // the last inked character: of the words, or of the note
-            let glyph = min(lm.glyphIndexForCharacter(at: max(last, start) - 1), lm.numberOfGlyphs - 1)
-            let fragment = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-            let ink = lm.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: tc)
-            return (ink.maxX + origin.x, fragment.minY + origin.y)
-        }
-        let glyph = min(lm.glyphIndexForCharacter(at: start), lm.numberOfGlyphs - 1)
+        guard lm.numberOfGlyphs > 0 else { return (origin.x, origin.y) }
+        let glyph = min(lm.glyphIndexForCharacter(at: at), lm.numberOfGlyphs - 1)
         let fragment = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-        return (fragment.minX + lm.location(forGlyphAt: glyph).x + origin.x, fragment.minY + origin.y)
+        let x = fragment.minX + lm.location(forGlyphAt: glyph).x + advance(ofGlyph: glyph, at: at, lm: lm)
+        return (x + origin.x, fragment.minY + origin.y)
+    }
+
+    /// A glyph's own width, without any spacing after it.
+    private func advance(ofGlyph glyph: Int, at char: Int, lm: NSLayoutManager) -> CGFloat {
+        guard let storage = textStorage, char < storage.length else { return 0 }
+        let font = storage.attribute(.font, at: char, effectiveRange: nil) as? NSFont ?? Style.baseFont
+        return font.advancement(forCGGlyph: lm.cgGlyph(at: glyph)).width
     }
 
     // Rebuild/reposition the balls, and the card that is out, from their
@@ -2157,10 +2348,10 @@ final class PlainTextView: NSTextView {
             crumple.reset()
             dropCard()
         }
-        guard let lm = layoutManager, let tc = textContainer else { return }
+        guard let lm = layoutManager else { return }
         let size = StickyBallView.hitSize
-        let diameter = CGFloat(CrumpleSheet.ballDiameter)
-        var perSpot: [CGPoint: Int] = [:]
+        let slots = slotCharacters(list)
+        applyStickySlots(slots)
         for sticky in list.sorted(by: { $0.start < $1.start }) {
             let ball = balls[sticky.id] ?? {
                 let b = StickyBallView(id: sticky.id)
@@ -2170,31 +2361,32 @@ final class PlainTextView: NSTextView {
                 balls[sticky.id] = b
                 return b
             }()
-            // The ball sits right after the sticky's words, raised onto the
-            // shoulder of the last one — up in the air between the letters and
-            // the rule above, where it marks the words without covering the
-            // next one. Two stickies ending at the same place sit side by side.
-            let end = wordsEnd(for: sticky, lm: lm, tc: tc)
-            let spot = CGPoint(x: end.x, y: end.lineTop)
-            let stacked = CGFloat(perSpot[spot, default: 0])
-            perSpot[spot, default: 0] += 1
+            // The ball sits in its room in the line, centred on the line like
+            // the words beside it. Two stickies on the same words sit side by
+            // side, in anchor order.
+            guard let slot = slots.first(where: { $0.value.contains(sticky.id) }) else {
+                ball.isHidden = true
+                continue
+            }
+            let index = CGFloat(slot.value.firstIndex(of: sticky.id) ?? 0)
+            let room = slotStart(after: slot.key, lm: lm)
             let centre = CGPoint(
-                x: end.x + 3 + diameter / 2 + (diameter + 2) * stacked,
-                y: Style.ruledCentre(forLineTop: end.lineTop) - Style.inkHeight / 2 - 3)
+                x: room.x + Self.slotLead + Self.slotBall / 2 + (Self.slotBall + Self.slotGap) * index,
+                y: Style.ruledCentre(forLineTop: room.lineTop))
             ball.frame = NSRect(x: centre.x - size.width / 2, y: centre.y - size.height / 2,
                                 width: size.width, height: size.height)
 
-            // The card that is out opens in the sticky's margin, level with the
-            // line its ball is on, so the page stays readable around it; the
-            // sheet flies out to it from the words.
-            if let card, card.stickyID == sticky.id, openID == sticky.id {
+            // The card that is out opens right where its ball is, over the
+            // page — or wherever it was last dragged to. Kept on the page.
+            if let card, card.stickyID == sticky.id, openID == sticky.id, !card.isDragging {
                 if !card.isEditing { card.setText(sticky.text) }
                 let width = Self.cardWidth
                 card.frame.size.width = width // set width before measuring wrap height
-                let left = sticky.left == true
-                let x = left ? Style.sideMargin - width - 14 : bounds.width - Style.sideMargin + 14
-                let y = max(8, Style.ruledCentre(forLineTop: end.lineTop) - 16)
-                card.frame = NSRect(x: x, y: y, width: width, height: card.desiredHeight)
+                var origin = NSPoint(x: centre.x - Self.slotBall, y: centre.y - Self.slotBall / 2 - 4)
+                if let x = sticky.pinX, let y = sticky.pinY { origin = NSPoint(x: x, y: y) }
+                origin.x = min(max(origin.x, 8), max(8, bounds.width - width - 8))
+                origin.y = max(origin.y, 8)
+                card.frame = NSRect(origin: origin, size: NSSize(width: width, height: card.desiredHeight))
             }
         }
         showFlight()
@@ -2622,11 +2814,21 @@ final class PlainTextView: NSTextView {
             }
             guard covered.length > 0 else { return }
             let ink = lm.boundingRect(forGlyphRange: covered, in: tc)
+            // The last letter may carry a ball's room after it; the wash ends
+            // at the letter, and the ball sits clear of it.
+            var right = ink.maxX
+            let lastGlyph = NSMaxRange(covered) - 1
+            let lastChar = lm.characterIndexForGlyph(at: lastGlyph)
+            if let storage = self.textStorage, lastChar < storage.length,
+               storage.attribute(.stickySlot, at: lastChar, effectiveRange: nil) != nil {
+                right = fragment.minX + lm.location(forGlyphAt: lastGlyph).x
+                    + self.advance(ofGlyph: lastGlyph, at: lastChar, lm: lm)
+            }
             let top = fragment.minY + origin.y
             bands.append(NSRect(
                 x: ink.minX + origin.x - 2,
                 y: Style.ruledCentre(forLineTop: top) - height / 2,
-                width: ink.width + 4, height: height))
+                width: right - ink.minX + 4, height: height))
         }
         return bands
     }
