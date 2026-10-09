@@ -1,72 +1,18 @@
 # JUI
 
-A single-window macOS writing pad. A cream sheet, Courier, and no chrome — built
-to feel like a page rather than an app.
+A quiet macOS writing pad: a cream sheet, Courier and a ruled page. Needs macOS 26 or later.
 
-It was written as a gift, so it optimises for how it *feels* to write in rather
-than for feature count. Five Swift files and a shell script: no Xcode project,
-no package manager, no dependencies.
+## Opening it
 
-## What it does
-
-- **A page, not a document window.** Hidden title bar, wide margins, justified
-  paragraphs, ruled paper, and traffic lights covered by flat cream dots that
-  only reveal themselves under the pointer.
-- **Silent autosave.** Notes are RTF files in a folder you choose, named by UUID
-  — readable in Finder, portable, no database.
-- **Folders**, one level deep, that are real subdirectories on disk. Deleting a
-  folder deletes the notes inside it; there is no trash.
-- **Sticky notes** anchored to a range of text rather than to pixels, which
-  survive edits and reflow. Put away, a sticky is a small crumpled ball in
-  the line, right after the words it is about, which carry a faint wash of
-  its colour; clicked, the ball opens out into a postage-stamp card right
-  there, which can be dragged anywhere on the page.
-- **⌘K search** across every note, with snippets, folder prefixes, and a command
-  row or two.
-- **Six themes** — cream, mint, sky, coral, lilac, orchid — applied instantly.
-  Each one holds the original's lightness and saturation and rotates only hue,
-  so contrast and hierarchy survive the change.
-- **Writing conveniences**: markdown-style bullets, ⌘I for italics,
-  typewriter-style input that never rewrites your dashes or quotes, and a caret
-  that glides rather than jumps.
-- **One font choice for the whole app.** The family picked in settings sets the
-  page, the panels, the search palette and the sticky notes together.
-
-## Build
+JUI isn't notarised, so macOS blocks it the first time. Unzip `JUI.zip`, move `JUI.app` to `/Applications`, then run:
 
 ```bash
-./build.sh
+xattr -cr /Applications/JUI.app
+open /Applications/JUI.app
 ```
 
-Produces a universal `JUI.app` (Apple Silicon + Intel, macOS 26 and later),
-ad-hoc signs and verifies it, stamps a fresh build number, and packages
-`JUI.zip`. Needs the Swift toolchain from Xcode or the Command Line Tools.
+To build `JUI.app` and `JUI.zip` yourself, run `./build.sh`.
 
-## Installing a build
+## License
 
-The app is only **ad-hoc signed** — notarisation needs a paid Apple Developer
-account — so macOS treats every new build as an unknown app. After unzipping,
-before the first launch:
-
-```bash
-xattr -cr JUI.app
-```
-
-Then move it to `/Applications` before opening it. A quarantined app launched
-from `Downloads` gets translocated to a read-only mount, which produces its own
-confusing failures.
-
-## Layout
-
-| File | What's in it |
-|---|---|
-| `main.swift` | Colour and type tokens, store, text engine, stickies, panel, search, settings |
-| `Crumple.swift` | The crumpled-ball sticky and its unfold |
-| `Theme.swift` | The six palettes and the theme picker |
-| `Texture.swift` | The paper: which stock each surface takes, and how hard |
-| `Onboarding.swift` | First-run envelope flow |
-| `build.sh` | Build, sign, verify, package, push |
-| `CLAUDE.md` | Architecture notes, and the invariants worth not breaking |
-| `CHANGELOG.md` | What was built, in order, and why |
-
-Requires macOS 26 or later.
+[MIT](LICENSE)
