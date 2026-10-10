@@ -1253,13 +1253,33 @@ final class SmoothCaret {
 final class StickyTextView: NSTextView {
     var menuProvider: (() -> NSMenu)?
     // Told when the sticky gains or loses focus, a hop later — once the
-    // window's first responder says so — which is what shows and hides its
-    // buttons.
+    // window's first responder says so — which is what puts its card away.
     var onFocusChange: (() -> Void)?
+    // While this is being written in it receives every mouse move in the
+    // window, and as an NSTextView it answers each with the I-beam — over the
+    // card's head too. The card says what it wants there instead; nil leaves
+    // the I-beam, over the words. See `PlainTextView.stickyCursor`.
+    var cursorOverride: ((NSPoint) -> NSCursor?)?
     private lazy var smoothCaret = SmoothCaret(view: self)
 
     override func menu(for event: NSEvent) -> NSMenu? {
         menuProvider?()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        if let cursor = cursorOverride?(event.locationInWindow) {
+            cursor.set()
+            return
+        }
+        super.mouseMoved(with: event)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        if let cursor = cursorOverride?(event.locationInWindow) {
+            cursor.set()
+            return
+        }
+        super.cursorUpdate(with: event)
     }
 
     override func viewDidMoveToWindow() {
@@ -1513,6 +1533,12 @@ final class StickyView: NSView, NSTextViewDelegate {
         noteView.delegate = self
         noteView.menuProvider = { [weak self] in self?.stickyMenu() ?? NSMenu() }
         noteView.onFocusChange = { [weak self] in self?.onFocusChange?() }
+        noteView.cursorOverride = { [weak self] point in
+            // the page's choice, so a ball is right too while the card is
+            // being written in
+            (self?.superview as? PlainTextView)?.stickyCursor(atWindowPoint: point)
+                ?? self?.cursor(atWindowPoint: point)
+        }
         noteView.isVerticallyResizable = true
         noteView.isHorizontallyResizable = false
         noteView.autoresizingMask = [.width]
@@ -1774,6 +1800,17 @@ final class StickyView: NSView, NSTextViewDelegate {
     // where the flourish is. Words take clicks as words. Not being written in,
     // the whole card is a handle.
     private static let grabEdge: CGFloat = 10
+
+    /// What the pointer should look like at `windowPoint`, if it is over the
+    /// card and not over its words: an arrow on the ring, an open hand on a
+    /// handle. Nil over the words, or off the card.
+    func cursor(atWindowPoint windowPoint: NSPoint) -> NSCursor? {
+        guard !isHidden, let superview else { return nil }
+        let inSuperview = superview.convert(windowPoint, from: nil)
+        guard frame.contains(inSuperview) else { return nil }
+        if showsHeader, closeDot.frame.contains(convert(windowPoint, from: nil)) { return .arrow }
+        return isHandle(inSuperview) ? .openHand : nil
+    }
 
     private func isHandle(_ point: NSPoint) -> Bool {
         let p = convert(point, from: superview)
@@ -3039,6 +3076,10 @@ final class PlainTextView: NSTextView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        if let cursor = stickyCursor(atWindowPoint: event.locationInWindow) {
+            cursor.set()
+            return
+        }
         if ArrowZones.active || isInMargin(event.locationInWindow) {
             NSCursor.arrow.set()
             return
@@ -3047,11 +3088,35 @@ final class PlainTextView: NSTextView {
     }
 
     override func cursorUpdate(with event: NSEvent) {
+        if let cursor = stickyCursor(atWindowPoint: event.locationInWindow) {
+            cursor.set()
+            return
+        }
         if ArrowZones.active || isInMargin(event.locationInWindow) {
             NSCursor.arrow.set()
             return
         }
         super.cursorUpdate(with: event)
+    }
+
+    /// The cursor a sticky wants under the pointer, if it is over one: the
+    /// open card's own (an open hand on its head and other handles, an arrow on
+    /// its ring — nil over its words, which keep the I-beam), or an arrow on a
+    /// ball. Asked first, because NSTextView sets the I-beam over its whole
+    /// bounds on every mouse move, cards and balls included, and that wins over
+    /// the cursor rects they set for themselves.
+    func stickyCursor(atWindowPoint windowPoint: NSPoint) -> NSCursor? {
+        if let card, !card.isHidden, let cursor = card.cursor(atWindowPoint: windowPoint) {
+            return cursor
+        }
+        if let card, !card.isHidden, card.frame.contains(convert(windowPoint, from: nil)) {
+            return nil // over the card's words
+        }
+        let point = convert(windowPoint, from: nil)
+        if balls.values.contains(where: { !$0.isHidden && $0.frame.contains(point) }) {
+            return .arrow
+        }
+        return nil
     }
 
     // The margins are dead space for the caret, so they get the arrow rather
