@@ -250,6 +250,13 @@ Rules that keep it working:
   which take clicks as words. It then opens there from now on: `pinX`/`pinY`,
   in document points. "Return to Its Words" on its menu forgets the spot.
   `syncStickies` leaves a card alone while `isDragging`.
+- **A card has a head**: the day the sticky was made on the left (`created`,
+  in the house's own wording — "today", "yesterday", a weekday, a date), the
+  close ring on the right, a 12% hairline beneath, 32pt in all
+  (`headerHeight`). It isn't written in; it is the card's main handle — an
+  open hand over it, a closed one while dragging. `Sticky.created` is
+  optional: older files get the stickies file's creation date on load, and the
+  phone's `Sticky` carries the field too, so neither app drops it on save.
 - **A card is 280 wide — the phone's — and at most three quarters of the
   window tall** (`cardWidth`, `cardMaxShare`). `desiredHeight` is the height
   that shows everything; `syncStickies` caps it and keeps the card within the

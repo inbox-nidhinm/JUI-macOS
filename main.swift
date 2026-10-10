@@ -423,6 +423,11 @@ struct SearchHit: Identifiable {
 // it opens there next time instead of at its ball. `rotation` is from an older
 // build that tilted dragged cards; it stays, unread, so those files still
 // decode and keep it.
+//
+// `created` is when the sticky was made, shown at the head of its card. Older
+// files have none; `loadStickies` fills it in from the stickies file's own
+// creation date, the closest record there is. Optional, so files without it
+// decode — and the phone's model carries it too, so neither app drops it.
 struct Sticky: Identifiable, Codable, Equatable {
     let id: UUID
     var start: Int
@@ -431,6 +436,7 @@ struct Sticky: Identifiable, Codable, Equatable {
     var pinX: Double?
     var pinY: Double?
     var rotation: Double?
+    var created: Date?
     var left: Bool? // which margin it lives in; nil/false = right
 }
 
@@ -592,13 +598,22 @@ final class NotesStore: ObservableObject {
     }
 
     private func loadStickies(_ id: String, in folder: String?) -> [Sticky] {
-        guard let data = try? Data(contentsOf: stickiesURL(id, in: folder)) else { return [] }
-        return (try? JSONDecoder().decode([Sticky].self, from: data)) ?? []
+        let url = stickiesURL(id, in: folder)
+        guard let data = try? Data(contentsOf: url) else { return [] }
+        var list = (try? JSONDecoder().decode([Sticky].self, from: data)) ?? []
+        // Made before stickies were dated: the file was made with the first of
+        // them, so its creation date is the nearest thing to theirs.
+        if list.contains(where: { $0.created == nil }) {
+            let made = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+            for i in list.indices where list[i].created == nil { list[i].created = made }
+        }
+        return list
     }
 
     func addSticky(range: NSRange, left: Bool) -> UUID {
         var sticky = Sticky(id: UUID(), start: range.location, length: range.length, text: "")
         sticky.left = left
+        sticky.created = Date()
         stickies.append(sticky)
         scheduleSave()
         return sticky.id
@@ -1452,14 +1467,25 @@ final class StickyView: NSView, NSTextViewDelegate {
     /// True while the card is being dragged, so the page leaves it be.
     private(set) var isDragging = false
 
-    // The way to put a card away on purpose — a small dot in the top-right
-    // corner, where a sheet of paper is picked up by. Clicking anywhere off the
-    // card does the same; this is for when the pointer is already on it. The
-    // card's words wrap around it (`updateExclusion`), so nothing runs under it.
+    // The card's head: the day the sticky was made on the left, the close
+    // ring on the right, a hairline beneath. Not something to write in — it is
+    // the card's handle: drag it to move the card (an open hand over it, a
+    // closed one while held). The date is the house's own wording ("today",
+    // "yesterday", a weekday, then a date), as on the phone's list of notes.
+    private let dateLabel = NSTextField(labelWithString: "")
     private let closeDot = StickyCloseDot()
-    static let closeDotInset: CGFloat = 14 // its centre, from the top and right edges
+    private let created: Date?
+    static let headerHeight: CGFloat = 32
+    // The text's own left edge: its inset plus the container's line padding.
+    private static var writingLeft: CGFloat { textInset.width + 5 }
     /// Off for the paper a ball is crumpled from and a card's blank reverse.
-    var showsCloseDot = true { didSet { closeDot.isHidden = !showsCloseDot } }
+    var showsHeader = true {
+        didSet {
+            closeDot.isHidden = !showsHeader
+            dateLabel.isHidden = !showsHeader
+            needsDisplay = true
+        }
+    }
 
     // Which frame of the flourish is showing, when it shows at all. Until the
     // card has opened out flat there is no flourish on it; then it draws itself
@@ -1468,8 +1494,9 @@ final class StickyView: NSView, NSTextViewDelegate {
     private var flourishTimer: Timer?
     private var showsFlourish = false
 
-    init(id: UUID, text: String) {
+    init(id: UUID, text: String, created: Date? = nil) {
         stickyID = id
+        self.created = created
         flourishIndex = max(0, Self.frames.count - 1)
         super.init(frame: .zero)
         noteView.isRichText = false
@@ -1498,42 +1525,68 @@ final class StickyView: NSView, NSTextViewDelegate {
         scroller.hasHorizontalScroller = false
         scroller.documentView = noteView
         addSubview(scroller)
+        dateLabel.isEditable = false
+        dateLabel.isSelectable = false
+        dateLabel.drawsBackground = false
+        dateLabel.isBordered = false
+        dateLabel.lineBreakMode = .byTruncatingTail
+        styleDate()
+        addSubview(dateLabel)
         closeDot.onClick = { [weak self] in self?.onClose?() }
         addSubview(closeDot)
+    }
+
+    private func styleDate() {
+        dateLabel.stringValue = created.map(Self.dayName) ?? ""
+        dateLabel.font = Style.font(11)
+        dateLabel.textColor = Style.ink.withAlphaComponent(0.55) // inkMuted
+    }
+
+    // "today", "yesterday", the weekday within the last week, then the date —
+    // with the year only when it isn't this one. Lowercase, like the rest of
+    // the app's own words; the same wording the phone's list of notes uses.
+    static func dayName(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "today" }
+        if calendar.isDateInYesterday(date) { return "yesterday" }
+        let daysAgo = calendar.dateComponents(
+            [.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: .now)).day ?? 0
+        let name: String
+        if (2...6).contains(daysAgo) {
+            name = date.formatted(.dateTime.weekday(.wide))
+        } else if calendar.isDate(date, equalTo: .now, toGranularity: .year) {
+            name = date.formatted(.dateTime.day().month(.wide))
+        } else {
+            name = date.formatted(.dateTime.day().month(.wide).year())
+        }
+        return name.lowercased()
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
     override func layout() {
         super.layout()
+        let header = showsHeader ? Self.headerHeight : 0
         scroller.frame = NSRect(
             x: 0, y: bottomReserve,
-            width: bounds.width, height: max(bounds.height - bottomReserve, 0))
+            width: bounds.width, height: max(bounds.height - bottomReserve - header, 0))
         // At least the window it scrolls in, so a short note still fills it and
         // a click anywhere on the paper above the flourish lands in the text.
         noteView.minSize = NSSize(width: 0, height: scroller.contentSize.height)
         noteView.frame.size.width = scroller.contentSize.width
-        updateExclusion()
         noteView.sizeToFit()
+        // The head: date on the left, lined up with the writing below; the ring
+        // on the right, its edge on the writing's right edge.
+        let middle = bounds.height - Self.headerHeight / 2
         let side = StickyCloseDot.hitSide
-        closeDot.frame = NSRect(x: bounds.width - Self.closeDotInset - side / 2,
-                                y: bounds.height - Self.closeDotInset - side / 2,
+        let ringCentre = bounds.width - Self.writingLeft - StickyCloseDot.diameter / 2
+        closeDot.frame = NSRect(x: ringCentre - side / 2, y: middle - side / 2,
                                 width: side, height: side)
-    }
-
-    /// Keeps the first line's end clear of the close dot. In the text
-    /// container's own coordinates, which start inside the text inset: the
-    /// dot's left edge, less a little air, to the container's right edge, and
-    /// down as far as the dot reaches.
-    private func updateExclusion() {
-        guard let tc = noteView.textContainer else { return }
-        let width = noteView.frame.width - Self.textInset.width * 2
-        let reach = Self.closeDotInset + StickyCloseDot.diameter / 2 - Self.textInset.height
-        let left = width - (Self.closeDotInset - Self.textInset.width) - StickyCloseDot.diameter / 2 - 4
-        let rect = NSRect(x: left, y: 0, width: max(width - left, 0), height: max(reach + 2, 0))
-        if tc.exclusionPaths.first?.bounds != rect {
-            tc.exclusionPaths = [NSBezierPath(rect: rect)]
-        }
+        let labelHeight = ceil(dateLabel.intrinsicContentSize.height)
+        dateLabel.frame = NSRect(
+            x: Self.writingLeft - 2, // a label insets its text by 2
+            y: middle - labelHeight / 2,
+            width: max(ringCentre - side / 2 - Self.writingLeft - 8, 0), height: labelHeight)
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -1597,6 +1650,18 @@ final class StickyView: NSView, NSTextViewDelegate {
         if showsFlourish {
             Self.flower(flourishIndex, for: Style.theme)?.draw(
                 in: flourishRect(), from: .zero, operation: .multiply, fraction: 1)
+        }
+        // The hairline under the head — black at 12%, the app's divider tone,
+        // which darkens whatever it lies on rather than painting a colour over
+        // it, so it is right on gold and on all five other moods' stickies.
+        if showsHeader {
+            let y = (bounds.height - Self.headerHeight).rounded() + 0.5
+            let rule = NSBezierPath()
+            rule.move(to: NSPoint(x: Self.textInset.width, y: y))
+            rule.line(to: NSPoint(x: bounds.width - Self.textInset.width, y: y))
+            rule.lineWidth = 1
+            NSColor(white: 0, alpha: 0.12).setStroke()
+            rule.stroke()
         }
         NSGraphicsContext.restoreGraphicsState()
     }
@@ -1670,6 +1735,7 @@ final class StickyView: NSView, NSTextViewDelegate {
 
     func applyTheme() {
         noteView.applyTheme()
+        styleDate()
         closeDot.needsDisplay = true
         needsDisplay = true // the stamp body and its flourish are drawn by hand
     }
@@ -1678,6 +1744,8 @@ final class StickyView: NSView, NSTextViewDelegate {
     // re-measured — it sizes itself to its text.
     func applyFont() {
         noteView.applyFont()
+        styleDate()
+        needsLayout = true
         onLayoutNeeded?()
     }
 
@@ -1702,8 +1770,9 @@ final class StickyView: NSView, NSTextViewDelegate {
 
     // The card opens right where its ball was, over the page. To get it out of
     // the way it can be dragged anywhere, by its paper rather than its words:
-    // the perforated edge, or the band at the foot where the flourish is. Words
-    // take clicks as words. Not being written in, the whole card is a handle.
+    // the head (date and ring), the perforated edge, or the band at the foot
+    // where the flourish is. Words take clicks as words. Not being written in,
+    // the whole card is a handle.
     private static let grabEdge: CGFloat = 10
 
     private func isHandle(_ point: NSPoint) -> Bool {
@@ -1711,7 +1780,7 @@ final class StickyView: NSView, NSTextViewDelegate {
         guard bounds.contains(p) else { return false }
         if !isEditing { return true }
         return p.y < bottomReserve || p.x < Self.grabEdge || p.x > bounds.width - Self.grabEdge
-            || p.y > bounds.height - Self.grabEdge
+            || p.y > bounds.height - Self.headerHeight
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -1726,7 +1795,7 @@ final class StickyView: NSView, NSTextViewDelegate {
         for rect in [NSRect(x: 0, y: 0, width: w, height: bottomReserve),
                      NSRect(x: 0, y: 0, width: e, height: h),
                      NSRect(x: w - e, y: 0, width: e, height: h),
-                     NSRect(x: 0, y: h - e, width: w, height: e)] {
+                     NSRect(x: 0, y: h - Self.headerHeight, width: w, height: Self.headerHeight)] {
             addCursorRect(rect, cursor: .openHand)
         }
     }
@@ -1784,9 +1853,10 @@ final class StickyView: NSView, NSTextViewDelegate {
         if noteView.frame.width != bounds.width {
             noteView.frame.size.width = bounds.width
         }
-        updateExclusion() // the dot can push a word onto the next line
         lm.ensureLayout(for: tc)
-        return max(lm.usedRect(for: tc).height + Self.textInset.height * 2 + bottomReserve, bounds.width)
+        let header = showsHeader ? Self.headerHeight : 0
+        return max(lm.usedRect(for: tc).height + Self.textInset.height * 2 + bottomReserve + header,
+                   bounds.width)
     }
 
     func focus() { window?.makeFirstResponder(noteView) }
@@ -2101,7 +2171,7 @@ final class PlainTextView: NSTextView {
     /// nothing on it.
     static func blankCard(size: NSSize) -> NSImage {
         let view = StickyView(id: UUID(), text: "")
-        view.showsCloseDot = false
+        view.showsHeader = false
         view.frame = NSRect(origin: .zero, size: size)
         return view.picture()
     }
@@ -2157,7 +2227,7 @@ final class PlainTextView: NSTextView {
         if let current = openID { putAwaySticky(current, animated: false) }
         dropCard()
 
-        let view = StickyView(id: id, text: sticky.text)
+        let view = StickyView(id: id, text: sticky.text, created: sticky.created)
         view.onTextChange = { [weak self] text in self?.notesStore?.updateStickyText(id, text) }
         view.onDelete = { [weak self] in
             guard let self else { return }
