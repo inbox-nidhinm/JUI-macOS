@@ -250,6 +250,13 @@ Rules that keep it working:
   which take clicks as words. It then opens there from now on: `pinX`/`pinY`,
   in document points. "Return to Its Words" on its menu forgets the spot.
   `syncStickies` leaves a card alone while `isDragging`.
+- **A card is 280 wide — the phone's — and at most three quarters of the
+  window tall** (`cardWidth`, `cardMaxShare`). `desiredHeight` is the height
+  that shows everything; `syncStickies` caps it and keeps the card within the
+  part of the page on screen. Past the cap the writing scrolls inside the
+  stamp: the text view sits in a `CardScrollView` above the flourish band, with
+  no scroller, which hands a scroll on to the page whenever it has nothing to
+  scroll itself.
 
 **The words a sticky is about carry a wash** of the sticky colour at 26%,
 painted in `drawBackground` after the ruling — so beneath the text — sized and

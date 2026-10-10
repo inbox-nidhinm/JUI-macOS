@@ -1390,6 +1390,11 @@ final class StickyView: NSView, NSTextViewDelegate {
 
     let stickyID: UUID
     private let noteView = StickyTextView()
+    // The writing scrolls inside the stamp once the card has reached its
+    // tallest (three quarters of the window — the page decides that), between
+    // the top edge and the flourish, which stays put. No scroller, as on the
+    // phone: a trackpad or wheel scrolls it, and the caret keeps itself in view.
+    private let scroller = CardScrollView()
     // bottom band reserved for the flower; text never enters it
     // The flourish, as fractions of the stamp's *width*.
     //
@@ -1481,7 +1486,18 @@ final class StickyView: NSView, NSTextViewDelegate {
         noteView.delegate = self
         noteView.menuProvider = { [weak self] in self?.stickyMenu() ?? NSMenu() }
         noteView.onFocusChange = { [weak self] in self?.onFocusChange?() }
-        addSubview(noteView)
+        noteView.isVerticallyResizable = true
+        noteView.isHorizontallyResizable = false
+        noteView.autoresizingMask = [.width]
+        noteView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                  height: CGFloat.greatestFiniteMagnitude)
+        scroller.drawsBackground = false
+        scroller.contentView.drawsBackground = false
+        scroller.borderType = .noBorder
+        scroller.hasVerticalScroller = false
+        scroller.hasHorizontalScroller = false
+        scroller.documentView = noteView
+        addSubview(scroller)
         closeDot.onClick = { [weak self] in self?.onClose?() }
         addSubview(closeDot)
     }
@@ -1490,10 +1506,15 @@ final class StickyView: NSView, NSTextViewDelegate {
 
     override func layout() {
         super.layout()
-        noteView.frame = NSRect(
+        scroller.frame = NSRect(
             x: 0, y: bottomReserve,
             width: bounds.width, height: max(bounds.height - bottomReserve, 0))
+        // At least the window it scrolls in, so a short note still fills it and
+        // a click anywhere on the paper above the flourish lands in the text.
+        noteView.minSize = NSSize(width: 0, height: scroller.contentSize.height)
+        noteView.frame.size.width = scroller.contentSize.width
         updateExclusion()
+        noteView.sizeToFit()
         let side = StickyCloseDot.hitSide
         closeDot.frame = NSRect(x: bounds.width - Self.closeDotInset - side / 2,
                                 y: bounds.height - Self.closeDotInset - side / 2,
@@ -1751,7 +1772,8 @@ final class StickyView: NSView, NSTextViewDelegate {
     }
 
     // Square by default — height matches width — growing only when the
-    // content needs more room.
+    // content needs more room. This is the height that shows *everything*; the
+    // page caps it (`PlainTextView.cardMaxShare`) and the rest scrolls.
     var desiredHeight: CGFloat {
         guard let lm = noteView.layoutManager, let tc = noteView.textContainer else {
             return bounds.width
@@ -1760,9 +1782,7 @@ final class StickyView: NSView, NSTextViewDelegate {
         // pass yet, so the text would measure against a zero-width container.
         // Size the inner text view synchronously before measuring.
         if noteView.frame.width != bounds.width {
-            noteView.frame = NSRect(
-                x: 0, y: bottomReserve,
-                width: bounds.width, height: max(bounds.height - bottomReserve, 100))
+            noteView.frame.size.width = bounds.width
         }
         updateExclusion() // the dot can push a word onto the next line
         lm.ensureLayout(for: tc)
@@ -1779,6 +1799,21 @@ final class StickyView: NSView, NSTextViewDelegate {
     // A sticky that was never typed into vanishes when clicked away from —
     // the page decides that as it puts the card away (`putAwaySticky`), so
     // that it crumples to nothing rather than back into a ball.
+}
+
+// The scroll view a sticky's writing sits in. It scrolls only when there is
+// more writing than the card shows; otherwise a scroll over the card goes on
+// to the page beneath, which is what the hand meant — a scroll view keeps every
+// scroll it is given by default, and the page would stop dead under a card.
+final class CardScrollView: NSScrollView {
+    override func scrollWheel(with event: NSEvent) {
+        let content = documentView?.frame.height ?? 0
+        if content <= contentSize.height + 0.5 {
+            nextResponder?.scrollWheel(with: event)
+        } else {
+            super.scrollWheel(with: event)
+        }
+    }
 }
 
 // The flat square that appears above an active selection.
@@ -2038,7 +2073,13 @@ final class PlainTextView: NSTextView {
     private let selectionIcon = SelectionIconView()
     private var annotationsConfigured = false
 
-    static let cardWidth: CGFloat = 172
+    // The phone's card, so a sticky reads the same in both: 280 across leaves
+    // 252 for the writing, about 28 characters of the 14pt sticky type. It was
+    // 172 — a margin note's width, kept after the card moved onto the page.
+    static let cardWidth: CGFloat = 280
+    /// The tallest a card grows, as a share of the window it is in; past
+    /// this its writing scrolls.
+    static let cardMaxShare: CGFloat = 0.75
 
     private var reducesMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
@@ -2465,16 +2506,22 @@ final class PlainTextView: NSTextView {
                                 width: size.width, height: size.height)
 
             // The card that is out opens right where its ball is, over the
-            // page — or wherever it was last dragged to. Kept on the page.
+            // page — or wherever it was last dragged to. It grows with its
+            // writing up to three quarters of the window and scrolls past
+            // that, and is kept within the part of the page on screen, so a
+            // tall card opened low down rises to stay whole.
             if let card, card.stickyID == sticky.id, openID == sticky.id, !card.isDragging {
                 if !card.isEditing { card.setText(sticky.text) }
                 let width = Self.cardWidth
                 card.frame.size.width = width // set width before measuring wrap height
+                let shown = enclosingScrollView?.documentVisibleRect ?? visibleRect
+                let height = min(card.desiredHeight, max(shown.height * Self.cardMaxShare, width / 2))
                 var origin = NSPoint(x: centre.x - Self.slotBall, y: centre.y - Self.slotBall / 2 - 4)
                 if let x = sticky.pinX, let y = sticky.pinY { origin = NSPoint(x: x, y: y) }
                 origin.x = min(max(origin.x, 8), max(8, bounds.width - width - 8))
-                origin.y = max(origin.y, 8)
-                card.frame = NSRect(origin: origin, size: NSSize(width: width, height: card.desiredHeight))
+                origin.y = min(origin.y, shown.maxY - height - 8)
+                origin.y = max(origin.y, shown.minY + 8, 8)
+                card.frame = NSRect(origin: origin, size: NSSize(width: width, height: height))
             }
         }
         showFlight()
