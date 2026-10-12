@@ -14,6 +14,7 @@ No Xcode project. Five Swift files compiled directly by `swiftc`:
 | File | Lines | Contents |
 |---|---|---|
 | `main.swift` | ~4200 | Everything: tokens, store, text engine, stickies, panel, search, settings |
+| `Home.swift` | ~550 | The home screen, ported from the phone's `HomeView` (branch `home-screen`) |
 | `Crumple.swift` | ~560 | The crumpled-ball sticky: the SceneKit sheet, its creases, `CrumpleDirector` |
 | `DockTile.swift` | ~80 | The Dock tile plug-in — built on its own into `Contents/PlugIns`, not into the app |
 | `Theme.swift` | ~200 | The six palettes, the mood-following `AppIcon`, the mood-dot `ThemePicker` |
@@ -140,13 +141,20 @@ it on keystrokes, you'll wipe the undo stack and fight the caret on every letter
 
 ### Overlay states
 
-Three mutually-aware overlays, all flags on the store:
+Four mutually-aware overlays, all flags on the store:
 
+- `homeShown` — the home screen: every folder and note on the page's paper,
+  beside the notes tray rather than replacing it. Opened by the grid button by
+  the controls or ⇧⌘H (`showHome`), closed by opening a note, Escape, or the
+  button again. `homeFolder` is the folder it stands in (nil = root); ⌘N lands
+  there. It sits *under* the hidden page, so the flourish opens settings over
+  it and closing them comes back to it, as on the phone. Escape is an
+  `NSEvent` monitor in `HomeView`, since nothing on the screen holds focus.
 - `hiddenShown` — the flourish page: dedication + settings (name, vault, font)
 - `searchShown` — ⌘K palette
 - `onboardingShown` — first run; **cannot be escaped** (`onExitCommand {}`)
 
-`editorBlocked` (`hiddenShown || onboardingShown`) freezes the text view.
+`editorBlocked` (`hiddenShown || onboardingShown || homeShown`) freezes the text view.
 `RichTextEditor.updateNSView` is what actually flips
 `isEditable`/`isSelectable` and moves first responder.
 

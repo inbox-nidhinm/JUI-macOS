@@ -503,7 +503,7 @@ final class NotesStore: ObservableObject {
         !UserDefaults.standard.bool(forKey: "onboardingCompleted")
 
     // typing is suspended while a full-window overlay is up
-    var editorBlocked: Bool { hiddenShown || onboardingShown }
+    var editorBlocked: Bool { hiddenShown || onboardingShown || homeShown }
 
     func setDisplayName(_ raw: String) {
         let clean = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -524,6 +524,7 @@ final class NotesStore: ObservableObject {
     func replayOnboarding() {
         searchShown = false
         hiddenShown = false
+        homeShown = false
         saveNow() // the editor is about to freeze behind a full-window overlay
         onboardingShown = true
     }
@@ -588,6 +589,27 @@ final class NotesStore: ObservableObject {
     // The hidden page is a read-only overlay toggled by the corner flourish;
     // while it's up, the editor underneath is frozen.
     @Published var hiddenShown = false
+
+    // MARK: Home
+
+    // The home screen: every note and folder on the page's own paper, as on the
+    // phone, where it is where the app opens. Here it sits beside the notes
+    // tray rather than replacing it — a full-window place to browse, reached
+    // from its button by the controls or ⇧⌘H, and left by opening a note,
+    // Escape, or the button again. The editor is frozen beneath it like any
+    // other full-window page.
+    @Published var homeShown = false
+    /// nil = home's root, else the folder it is standing in. Always opens at
+    /// the root: it is home, not the tray, which opens where the note is.
+    @Published var homeFolder: String?
+
+    func showHome() {
+        searchShown = false
+        hiddenShown = false
+        saveNow() // the editor is about to freeze behind it
+        homeFolder = nil
+        homeShown = true
+    }
 
     // MARK: Sticky annotations
 
@@ -906,6 +928,7 @@ final class NotesStore: ObservableObject {
     // open a note from search and remember where to scroll/flash
     func reveal(_ id: String, query: String) {
         searchShown = false
+        homeShown = false
         saveNow()
         load(id, in: notes.first(where: { $0.id == id })?.folder, revealing: query)
     }
@@ -1095,6 +1118,7 @@ final class NotesStore: ObservableObject {
     }
 
     func open(_ id: String) {
+        homeShown = false
         saveNow()
         load(id, in: notes.first(where: { $0.id == id })?.folder)
     }
@@ -1112,11 +1136,13 @@ final class NotesStore: ObservableObject {
     }
 
     func newNote() {
+        // land where home or the panel is standing if either is open, else
+        // stay in the open note's folder
+        let folder = homeShown ? homeFolder : (panelContext ?? currentFolder)
         hiddenShown = false
+        homeShown = false
         saveNow()
-        // land in the panel's current location if it's open, else stay in the
-        // open note's folder
-        loadBlank(in: panelContext ?? currentFolder)
+        loadBlank(in: folder)
     }
 
     private func rtfURL(_ id: String, in folder: String?) -> URL {
@@ -3391,7 +3417,7 @@ struct RichTextEditor: NSViewRepresentable {
         }
         if context.coordinator.wasSearch != store.searchShown {
             context.coordinator.wasSearch = store.searchShown
-            if !store.searchShown, !store.hiddenShown {
+            if !store.searchShown, !store.editorBlocked {
                 DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }
             }
         }
@@ -4005,6 +4031,54 @@ struct ContentView: View {
         }
     }
 
+    // The buttons at the foot. On a note: the word count, home, the tray and a
+    // new note. On home there is no note to count and the tray would only show
+    // what is already on screen, so they give way to search — and home keeps
+    // its place, third from the right, lit while it is open, so the button
+    // that took you there is the one under the pointer to come back.
+    private var controls: some View {
+        // 12 between the buttons in the system and 36 before them (a
+        // flex gap either side of a 12 spacer), which is 9 and 26 here.
+        HStack(spacing: 9) {
+            if !store.homeShown {
+                Text("\(store.wordCount)")
+                    .font(houseFont(14))
+                    .foregroundStyle(inkFaint)
+                    .padding(.trailing, 17)
+            }
+            IconButton(systemName: "square.grid.2x2", help: "Home (⇧⌘H)",
+                       active: store.homeShown) {
+                toggleHome()
+            }
+            if store.homeShown {
+                IconButton(systemName: "magnifyingglass", help: "Search (⌘K)") {
+                    store.openSearch()
+                }
+            } else {
+                IconButton(systemName: "text.justify.left", help: "Past notes",
+                           active: showNotes) {
+                    withAnimation(Self.arrival) { showNotes.toggle() }
+                }
+            }
+            IconButton(systemName: "plus",
+                       help: store.homeShown && store.homeFolder != nil
+                           ? "New note in \(store.homeFolder!) (⌘N)" : "New note (⌘N)") {
+                store.newNote()
+                withAnimation(Self.arrival) { showNotes = false }
+            }
+        }
+        .arrowCursorZone()
+        .padding(.trailing, 12)
+        .padding(.bottom, 10)
+    }
+
+    private func toggleHome() {
+        withAnimation(Self.arrival) { showNotes = false }
+        withAnimation(.easeOut(duration: 0.2)) {
+            if store.homeShown { store.homeShown = false } else { store.showHome() }
+        }
+    }
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             // Bare colour: the textured page is painted by the text view on
@@ -4034,6 +4108,17 @@ struct ContentView: View {
                 // should be able to type the moment you hit ⌘K.
                 .animation(.timingCurve(0, 0, 0.35, 1, duration: 0.6), value: store.searchShown)
                 .animation(.easeOut(duration: 0.25), value: store.onboardingShown)
+
+            // Home: every note and folder, over the frozen page. Beneath the
+            // settings page, so the corner flourish opens settings over it and
+            // closing them comes back to it, as on the phone; blurred under ⌘K
+            // the way the page is.
+            if store.homeShown {
+                HomeView(store: store)
+                    .blur(radius: store.searchShown ? 8 : 0)
+                    .animation(Self.arrival, value: store.searchShown)
+                    .transition(.opacity)
+            }
 
             // the hidden page: dedication + the app's settings
             if store.hiddenShown {
@@ -4090,25 +4175,7 @@ struct ContentView: View {
             }
 
             if !store.hiddenShown, !store.onboardingShown {
-                // 12 between the buttons in the system and 36 before them (a
-                // flex gap either side of a 12 spacer), which is 9 and 26 here.
-                HStack(spacing: 9) {
-                    Text("\(store.wordCount)")
-                        .font(houseFont(14))
-                        .foregroundStyle(inkFaint)
-                        .padding(.trailing, 17)
-                    IconButton(systemName: "text.justify.left", help: "Past notes",
-                               active: showNotes) {
-                        withAnimation(Self.arrival) { showNotes.toggle() }
-                    }
-                    IconButton(systemName: "plus", help: "New note (⌘N)") {
-                        store.newNote()
-                        withAnimation(Self.arrival) { showNotes = false }
-                    }
-                }
-                .arrowCursorZone()
-                .padding(.trailing, 12)
-                .padding(.bottom, 10)
+                controls
             }
 
             // first run: sits above everything, and nothing behind it is
@@ -4648,6 +4715,13 @@ struct PlainEditorApp: App {
                     }
                 }
                 .keyboardShortcut("k", modifiers: .command)
+                Button("Home") {
+                    guard !store.onboardingShown else { return }
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        if store.homeShown { store.homeShown = false } else { store.showHome() }
+                    }
+                }
+                .keyboardShortcut("h", modifiers: [.command, .shift])
             }
         }
     }

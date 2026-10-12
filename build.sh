@@ -180,7 +180,7 @@ fi
 for arch in arm64 x86_64; do
   swiftc -O -parse-as-library -swift-version 5 \
     -target "$arch-apple-macos$DEPLOY_TARGET" \
-    main.swift Theme.swift Texture.swift Onboarding.swift Crumple.swift -o "/tmp/jui-$arch"
+    main.swift Home.swift Theme.swift Texture.swift Onboarding.swift Crumple.swift -o "/tmp/jui-$arch"
 done
 lipo -create /tmp/jui-arm64 /tmp/jui-x86_64 -output "$APP/Contents/MacOS/$NAME"
 rm -f /tmp/jui-arm64 /tmp/jui-x86_64
