@@ -35,7 +35,19 @@ struct HomeView: View {
     @State private var confirmingDelete: String?
     @State private var escapeMonitor: Any?
 
+    // The sketch (HomeSketch.swift): grown into an empty vault, and across
+    // the page on the first visit.
+    @ObservedObject private var sketch = HomeSketch.shared
+    @AppStorage("homeSketchSeen") private var sketchSeen = false
+
     private var location: String? { store.homeFolder }
+
+    /// No notes and no folders anywhere: the sketch fills the space.
+    private var vaultEmpty: Bool { store.notes.isEmpty && store.folders.isEmpty }
+
+    /// The mood's ink at the muted step, for the sketch. Read here because
+    /// this view watches the store, so a change of mood redraws it.
+    private var sketchInk: CGColor { Style.theme.ink.withAlphaComponent(0.55).cgColor }
 
     // The column notes are read in. Folders three across at this width come
     // out at the phone's tile size; past it the page just has more margin.
@@ -60,7 +72,10 @@ struct HomeView: View {
 
     var body: some View {
         GeometryReader { geo in
-            page(foot: footClearance(geo.size))
+            ZStack {
+                page(foot: footClearance(geo.size), listHidden: sketch.introShown, size: geo.size)
+                if sketch.introShown { intro(in: geo.size) }
+            }
         }
         .ignoresSafeArea()
         .animation(.easeOut(duration: 0.15), value: store.notes)
@@ -71,7 +86,14 @@ struct HomeView: View {
             hoveredHeader = false
             endEditing()
         }
-        .onAppear(perform: watchEscape)
+        .onAppear {
+            watchEscape()
+            playSketchIfDue()
+        }
+        .onChange(of: vaultEmpty) { _, empty in
+            // The last note or folder just went: grow it into the space.
+            if empty { sketch.play() }
+        }
         .onDisappear {
             if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
             escapeMonitor = nil
@@ -94,7 +116,7 @@ struct HomeView: View {
         }
     }
 
-    private func page(foot: CGFloat) -> some View {
+    private func page(foot: CGFloat, listHidden: Bool, size: CGSize) -> some View {
         ZStack {
             // Papered like the page it covers, and like the settings page:
             // a whole-window screen printed on the sheet stock.
@@ -116,6 +138,13 @@ struct HomeView: View {
                                 .padding(.horizontal, 26)
                                 .padding(.vertical, 18)
                         }
+                    }
+                    if location == nil, vaultEmpty, HomeSketch.url != nil {
+                        HomeSketchView(sketch: sketch, ink: sketchInk)
+                            .frame(maxWidth: .infinity, maxHeight: emptySketchHeight(size, foot: foot))
+                            .padding(.horizontal, 26)
+                            .padding(.top, 28)
+                            .padding(.bottom, 6)
                     }
                     if visibleNotes.isEmpty, location != nil || store.folders.isEmpty {
                         Text("no notes yet")
@@ -139,7 +168,47 @@ struct HomeView: View {
             .scrollIndicators(.never)
             .mask(listMask(foot: foot))
             .arrowCursorZone()
+            // Hidden, not removed, behind the first visit's intro: the paper
+            // stays, so the sketch grows on the same page the notes come in on.
+            .opacity(listHidden ? 0 : 1)
+            .allowsHitTesting(!listHidden)
         }
+    }
+
+    // MARK: The sketch
+
+    /// The room an empty vault leaves the sketch: the window less the heading,
+    /// the add tile, the line under the sketch and the foot, so it shows whole
+    /// in a short window instead of running into the fade at the bottom.
+    private func emptySketchHeight(_ size: CGSize, foot: CGFloat) -> CGFloat {
+        let above = Self.topInset + 54 + CGFloat(folderRows.count) * (folderCellHeight + 8) + 34
+        let below = 44 + foot + Self.footFade
+        return max(120, size.height - above - below)
+    }
+
+    /// An empty vault grows the sketch every time home opens on it; a vault
+    /// with notes grows it once, as the first visit's intro.
+    private func playSketchIfDue() {
+        guard HomeSketch.url != nil else { return }
+        if vaultEmpty {
+            sketchSeen = true
+            sketch.play()
+        } else if !sketchSeen {
+            sketchSeen = true
+            sketch.playIntro()
+        }
+    }
+
+    /// The first visit: the sketch across the page, as wide as the window
+    /// comfortably allows, until it has grown and held. A click skips it.
+    private func intro(in size: CGSize) -> some View {
+        HomeSketchView(sketch: sketch, ink: sketchInk)
+            .frame(maxWidth: min(size.width - 160, 960), maxHeight: size.height - 200)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture { sketch.skipIntro() }
+            .transition(.opacity)
+            .arrowCursorZone()
     }
 
     // MARK: Escape
@@ -157,6 +226,10 @@ struct HomeView: View {
                   !store.onboardingShown,
                   !(event.window?.firstResponder is NSText) // a field is editing
             else { return event }
+            if HomeSketch.shared.introShown {
+                HomeSketch.shared.skipIntro()
+                return nil
+            }
             withAnimation(.easeOut(duration: 0.2)) {
                 if store.homeFolder != nil {
                     store.homeFolder = nil

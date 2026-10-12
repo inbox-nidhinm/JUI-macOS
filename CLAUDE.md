@@ -14,7 +14,9 @@ No Xcode project. Five Swift files compiled directly by `swiftc`:
 | File | Lines | Contents |
 |---|---|---|
 | `main.swift` | ~4200 | Everything: tokens, store, text engine, stickies, panel, search, settings |
-| `Home.swift` | ~550 | The home screen, ported from the phone's `HomeView` (branch `home-screen`) |
+| `Home.swift` | ~600 | The home screen, ported from the phone's `HomeView` (branch `home-screen`) |
+| `HomeSketch.swift` | ~150 | The sketch that grows onto home: an empty vault, and the first visit's intro |
+| `DrawOn/` | | The growth engine, **copied from Strain** (`~/Documents/Claude Code/Strain`). Change it there and copy back; `DrawOn/SNAPSHOT.md` names the commit |
 | `Crumple.swift` | ~560 | The crumpled-ball sticky: the SceneKit sheet, its creases, `CrumpleDirector` |
 | `DockTile.swift` | ~80 | The Dock tile plug-in — built on its own into `Contents/PlugIns`, not into the app |
 | `Theme.swift` | ~200 | The six palettes, the mood-following `AppIcon`, the mood-dot `ThemePicker` |
@@ -108,7 +110,8 @@ readable in Finder:
   never written to disk.
 
 `UserDefaults` keys — the complete set: `vaultPath`, `fontFamily`, `themeID`,
-`displayName`, `onboardingCompleted`.
+`displayName`, `onboardingCompleted`, `homeSketchSeen` (the first visit's
+sketch intro has played).
 
 **Titles are cached against modification date** (`titleCache`). Deriving one
 means opening the file and parsing the RTF, and `saveNow` ends in
@@ -150,6 +153,16 @@ Four mutually-aware overlays, all flags on the store:
   there. It sits *under* the hidden page, so the flourish opens settings over
   it and closing them comes back to it, as on the phone. Escape is an
   `NSEvent` monitor in `HomeView`, since nothing on the screen holds focus.
+
+  **The sketch** (`HomeSketch.swift`) is the wide Valley drawing
+  (`Art/HomeSketch/valley.svg`, shipped as an SVG and read at runtime), grown
+  on in 6 s by the DrawOn engine from 3–4 random seeds. An empty vault (no
+  notes, no folders) grows it into the space every time home opens; the first
+  visit with notes plays it once across the page as an intro, which a click or
+  Escape skips, then the notes fade in. Drawn in the mood's ink at the
+  muted step (0.55) on home's own paper, lines kept at least 1.1 pt; Reduce
+  Motion shows it whole and skips the intro. The growth is tuned in Strain,
+  not here.
 - `hiddenShown` — the flourish page: dedication + settings (name, vault, font)
 - `searchShown` — ⌘K palette
 - `onboardingShown` — first run; **cannot be escaped** (`onExitCommand {}`)

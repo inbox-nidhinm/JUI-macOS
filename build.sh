@@ -140,6 +140,14 @@ if [ -d Art/Textures ] && [ -n "$(ls -A Art/Textures/*.png 2>/dev/null)" ]; then
   echo "Textures: shipped $(ls -1 "$APP/Contents/Resources/Textures" | wc -l | tr -d ' ') ($(du -sh "$APP/Contents/Resources/Textures" | cut -f1))"
 fi
 
+# The home screen's sketch: the wide Valley, grown on by DrawOn/ when home is
+# empty or seen for the first time (HomeSketch.swift). Shipped as the SVG
+# itself; the strokes are read from it at runtime.
+if [ -f Art/HomeSketch/valley.svg ]; then
+  mkdir -p "$APP/Contents/Resources/HomeSketch"
+  cp Art/HomeSketch/valley.svg "$APP/Contents/Resources/HomeSketch/"
+fi
+
 # Flourish animation: 30 frames of a stop-motion draw-on, split out of one
 # animated SVG and rasterised here.
 #
@@ -180,7 +188,7 @@ fi
 for arch in arm64 x86_64; do
   swiftc -O -parse-as-library -swift-version 5 \
     -target "$arch-apple-macos$DEPLOY_TARGET" \
-    main.swift Home.swift Theme.swift Texture.swift Onboarding.swift Crumple.swift -o "/tmp/jui-$arch"
+    main.swift Home.swift HomeSketch.swift DrawOn/Artwork.swift DrawOn/Growth.swift DrawOn/Drawing.swift Theme.swift Texture.swift Onboarding.swift Crumple.swift -o "/tmp/jui-$arch"
 done
 lipo -create /tmp/jui-arm64 /tmp/jui-x86_64 -output "$APP/Contents/MacOS/$NAME"
 rm -f /tmp/jui-arm64 /tmp/jui-x86_64
